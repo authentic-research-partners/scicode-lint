@@ -26,11 +26,12 @@ references = []
 
 [detection]
 question = """
-Find fit_transform() or fit() calls on test data.
-Is fit() or fit_transform() incorrectly called on test data?
+Look for sklearn preprocessing (StandardScaler, MinMaxScaler, Normalizer, etc).
 
-YES = fit() or fit_transform() called on X_test (BUG)
-NO = fit on X_train then transform on X_test, OR uses Pipeline
+Is fit() or fit_transform() called on test data variables (X_test, test_data, test_X, etc)?
+
+YES = fit() or fit_transform() is called on test data (BUG - causes data leakage)
+NO = fit/fit_transform only on training data, transform() on test data, OR no preprocessing exists
 """
 
 warning_message = """

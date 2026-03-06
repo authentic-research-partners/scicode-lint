@@ -26,11 +26,12 @@ references = []
 
 [detection]
 question = """
-Find inference functions (call model() without loss.backward()).
-Is model.eval() MISSING or is torch.no_grad() MISSING?
+Look for validation/evaluation/inference functions that use torch.no_grad() but do NOT call model.eval().
 
-YES = eval() is MISSING or no_grad() is MISSING (BUG)
-NO = has BOTH eval() AND no_grad(), OR no inference functions exist
+Is model.eval() MISSING in code that uses torch.no_grad() for inference?
+
+YES = found torch.no_grad() inference code without model.eval() (BUG)
+NO = model.eval() is called before inference, OR no inference code exists
 """
 
 warning_message = """

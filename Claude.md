@@ -27,6 +27,7 @@ Detects pitfalls across ML correctness, PyTorch, numerical precision, reproducib
 
 **For AI agents WORKING ON scicode-lint (docs_dev_genai/):**
 - [ARCHITECTURE.md](docs_dev_genai/ARCHITECTURE.md) - Core design principles (READ THIS FIRST)
+- [CONTINUOUS_IMPROVEMENT.md](docs_dev_genai/CONTINUOUS_IMPROVEMENT.md) - Evaluation → improvement workflow
 - [IMPLEMENTATION.md](docs_dev_genai/IMPLEMENTATION.md) - Technical implementation details
 - [TOOLS.md](docs_dev_genai/TOOLS.md) - Development tools and agents
 
@@ -219,3 +220,24 @@ After writing code, **always** run:
 3. **Test** - `pytest`
 4. **Docs** - Update docs to match current state (no "updated"/"changed" language)
 5. **Commit** - Only commit clean, type-safe, documented code
+
+---
+
+## Continuous Improvement Loop
+
+**Core principle: Quality improvement is directly proportional to effort invested.**
+
+Each cycle of evaluation → analysis → improvement advances pattern quality. The more cycles run, the better the results.
+
+**⚠️ MANDATORY: Every pattern change requires running the pattern-reviewer agent.**
+
+```bash
+# After ANY pattern modification
+claude --agent pattern-reviewer "Review <pattern-id>"
+python evals/run_eval.py --pattern <pattern-id>   # Evaluate
+ruff check . && mypy src/ && pytest               # Validate
+```
+
+**Targets:** Precision ≥ 0.90, Recall ≥ 0.80 (Critical: Precision ≥ 0.95)
+
+**📖 Complete workflow:** [docs_dev_genai/CONTINUOUS_IMPROVEMENT.md](docs_dev_genai/CONTINUOUS_IMPROVEMENT.md)

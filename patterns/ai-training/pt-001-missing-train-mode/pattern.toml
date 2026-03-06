@@ -25,11 +25,12 @@ references = []
 
 [detection]
 question = """
-Find training loops (loss.backward() + optimizer.step()) in the code.
-Is model.train() MISSING before the training loop?
+Look for PyTorch training code: loops that call loss.backward() and optimizer.step().
 
-YES = model.train() is MISSING before training (BUG)
-NO = model.train() is called before training, OR no training loops exist
+Is there training code where model.train() is NEVER called before the training starts?
+
+YES = training code exists but model.train() is MISSING (BUG)
+NO = model.train() is called before training, OR no training code exists
 """
 
 warning_message = """

@@ -40,7 +40,7 @@ class ReportGenerator:
 
         report_data = {
             "timestamp": datetime.now().isoformat(),
-            "version": "0.1.1",
+            "version": "0.1.2",
             "metrics": metrics.to_dict(),
         }
 

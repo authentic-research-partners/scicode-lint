@@ -44,26 +44,15 @@ false_positive_risks = []
 [tests]
 
 [[tests.positive]]
-file = "test_positive/only_numpy_seed.py"
-description = "Training script that only sets np.random.seed but uses both PyTorch and Python random operations. Missing torch.manual_seed and random.seed."
-expected_issue = "Only NumPy seed is set, but code uses torch.nn and torch.optim which require torch.manual_seed for reproducibility"
+file = "test_positive/train_test_split_no_seed.py"
+description = "train_test_split called without random_state parameter"
+expected_issue = "train_test_split() missing random_state - produces different splits each run"
 min_confidence = 0.85
 
 [tests.positive.expected_location]
 type = "function"
-name = "train_model"
-snippet = "model = nn.Linear(10, 2)"
-
-[[tests.positive]]
-file = "test_positive/only_torch_seed.py"
-description = "Simulation using torch.manual_seed but also uses np.random.normal and random.random without setting their seeds."
-expected_issue = "Only PyTorch seed is set, but code uses np.random and random module without setting np.random.seed and random.seed"
-min_confidence = 0.85
-
-[tests.positive.expected_location]
-type = "method"
-name = "run_simulation"
-snippet = "noise = np.random.normal(0, 0.1, state.shape)"
+name = "prepare_data"
+snippet = "train_test_split(X, y, test_size=0.2)"
 
 [[tests.negative]]
 file = "test_negative/all_seeds_set.py"

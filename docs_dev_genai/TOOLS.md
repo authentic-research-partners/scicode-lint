@@ -437,8 +437,11 @@ python evals/integration/run_integration_eval.py --scenario ml_pipeline_complete
 
 ---
 
+---
+
 ## See Also
 
+- [CONTINUOUS_IMPROVEMENT.md](CONTINUOUS_IMPROVEMENT.md) - **Continuous Improvement Loop** (evaluation → improvement workflow)
 - [ARCHITECTURE.md](ARCHITECTURE.md) - Design principles
 - [IMPLEMENTATION.md](IMPLEMENTATION.md) - Technical details
 - [../CONTRIBUTING.md](../CONTRIBUTING.md) - Contribution guidelines

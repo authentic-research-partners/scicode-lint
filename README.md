@@ -56,7 +56,7 @@ test_scaler.py — 1 issue found
 
 ## Project Status
 
-**Status: Work in Progress** (v0.1.1 alpha). Initial implementation and design.
+**Status: Work in Progress** (v0.1.2 alpha). Initial implementation and design.
 
 **Completed:**
 - 44 initial patterns implemented
@@ -67,9 +67,9 @@ test_scaler.py — 1 issue found
 **Quality Metrics:**
 
 *Pattern-specific tests* (one pattern per file, isolated):
-- Precision: 64.8% (target: 90%)
-- Recall: 84.0% (target: 80%) ✓
-- Pass rate: 20% (9 of 44 patterns meet both thresholds)
+- Precision: 68.0% (target: 90%)
+- Recall: 87.5% (target: 80%) ✓
+- Pass rate: 30% (13 of 44 patterns meet both thresholds)
 
 *Integration tests* (realistic code, all patterns together):
 - Precision: 19.1% (high false positive rate in practice)
