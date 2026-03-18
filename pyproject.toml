@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "scicode-lint"
-version = "0.2.1"
+version = "0.2.2"
 description = "AI-powered linter for scientific ML code. Detects methodology bugs such as data leakage, incorrect cross-validation, numerical instability, and reproducibility issues that produce plausible but wrong results. 66 detection patterns across 5 categories. Runs via local or institutional vLLM server, no cloud APIs."
 readme = "README.md"
 requires-python = ">=3.13"
@@ -106,7 +106,10 @@ select = ["E", "F", "I", "UP"]
 "src/scicode_lint/detectors/prompts.py" = ["E501"]
 "src/scicode_lint/repo_filter/classify.py" = ["E501"]
 "evals/integration/integration_eval.py" = ["E501"]
+"evals/integration/prompts.py" = ["E501"]
+"evals/integration/generator.py" = ["E501"]
 "pattern_verification/deterministic/validate.py" = ["E501"]
+"pattern_verification/deterministic/doc_cache.py" = ["E501"]
 "real_world_demo/sources/papers_with_code/filter_abstracts.py" = ["E501"]
 "real_world_demo/analyze_errors.py" = ["E501"]
 "evals/integration/generated/**" = ["E501"]

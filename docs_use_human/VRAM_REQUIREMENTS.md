@@ -17,10 +17,10 @@ scicode-lint requires **minimum 16GB VRAM** with **native FP8 support** (compute
 **Just run the script** - it automatically verifies your hardware meets requirements:
 
 ```bash
-bash src/scicode_lint/vllm/start_vllm.sh
+scicode-lint vllm-server start
 ```
 
-The script verifies:
+The command verifies:
 1. **VRAM**: Minimum 16GB available
 2. **Compute capability**: >= 8.9 (native FP8 support)
 3. **GPU availability**: Rejects CPU-only systems
@@ -88,7 +88,7 @@ Check your setup is working:
 
 ```bash
 # 1. Verify requirements
-bash src/scicode_lint/vllm/start_vllm.sh
+scicode-lint vllm-server start
 # Will exit with error if hardware doesn't meet requirements
 
 # 2. Check VRAM usage with nvidia-smi (should be ~13GB)

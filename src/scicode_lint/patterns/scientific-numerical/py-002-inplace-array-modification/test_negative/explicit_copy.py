@@ -1,38 +1,47 @@
 import numpy as np
 
 
-def create_normalized_version(data):
-    """Create new array via numpy operations - naturally non-mutating."""
-    mean_val = np.mean(data)
-    std_val = np.std(data) + 1e-8
-    return (data - mean_val) / std_val
+def normalize_spectrum(spectrum):
+    """Normalize a frequency spectrum to unit energy."""
+    result = spectrum.copy()
+    total_energy = np.sum(result**2)
+    result /= np.sqrt(total_energy + 1e-12)
+    return result
 
 
-def binarize_image(image, threshold=0.5):
-    """Use np.where for thresholding - creates new array."""
-    return np.where(image >= threshold, 1.0, 0.0)
+def center_coordinates(positions):
+    """Shift particle positions so the centroid is at the origin."""
+    centered = positions.copy()
+    centroid = centered.mean(axis=0)
+    centered -= centroid
+    return centered
 
 
-def convolve_signal(signal, kernel):
-    """Signal smoothing via convolution - doesn't modify input."""
-    return np.convolve(signal, kernel, mode="same")
+def apply_baseline_correction(signal, baseline):
+    """Subtract a baseline from a measured signal and clip negatives."""
+    corrected = signal.copy()
+    corrected -= baseline
+    corrected[corrected < 0] = 0.0
+    return corrected
 
 
-def bounded_values(array, low=0, high=1):
-    """Use np.clip which returns new array."""
-    return np.clip(array, low, high)
+def scale_features_to_unit_range(features):
+    """Rescale each feature column to [0, 1] range."""
+    scaled = features.copy()
+    col_min = scaled.min(axis=0)
+    col_range = scaled.max(axis=0) - col_min + 1e-10
+    scaled -= col_min
+    scaled /= col_range
+    return scaled
 
 
-def cumulative_sum(data):
-    """Cumulative operations return new arrays."""
-    return np.cumsum(data)
+rng = np.random.default_rng(42)
+spec = rng.random(256)
+normed = normalize_spectrum(spec)
 
+coords = rng.random((50, 3))
+shifted = center_coordinates(coords)
 
-def element_wise_max(arr1, arr2):
-    """np.maximum returns new array."""
-    return np.maximum(arr1, arr2)
-
-
-original = np.random.rand(100)
-normalized = create_normalized_version(original)
-assert np.allclose(original.mean(), 0.5, atol=0.2)
+raw_signal = rng.random(100)
+bg = rng.random(100) * 0.3
+clean = apply_baseline_correction(raw_signal, bg)

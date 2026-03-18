@@ -4,7 +4,7 @@ from sklearn.model_selection import train_test_split
 
 
 class AnomalyDetector:
-    """Anomaly detection model - rare events require appropriate metrics."""
+    """Flags sensor readings outside normal operating ranges."""
 
     def __init__(self):
         self.model = LogisticRegression()
@@ -21,7 +21,7 @@ class AnomalyDetector:
 
 
 class RareDiseaseClassifier:
-    """Disease screening where positive cases are rare."""
+    """Classifies patient samples for genetic condition screening."""
 
     def __init__(self):
         self.model = LogisticRegression()

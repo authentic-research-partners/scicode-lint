@@ -33,6 +33,9 @@ Analyze CUDA initialization with multiprocessing.
 
 CUDA context doesn't survive fork() - initializing CUDA before forking can deadlock. The default start method on Linux is fork. Using mp.set_start_method('spawn') avoids this because spawn creates fresh interpreter processes that don't inherit the parent's CUDA state.
 
+DEVICE OBJECT ≠ CUDA INIT (this is critical):
+- device = "cuda", device = torch.device("cuda"), device = torch.device("cpu") — these create Python string/object values. They do NOT initialize CUDA. CUDA is only initialized when a tensor or model is physically moved: .cuda(), .to("cuda"), .to(torch.device("cuda")) where the device resolves to an actual GPU.
+
 WHAT INITIALIZES CUDA:
 - tensor.cuda() or tensor.to("cuda") - actually moves tensor to GPU
 - model.cuda() or model.to(device) where device is cuda
@@ -40,17 +43,26 @@ WHAT INITIALIZES CUDA:
 
 WHAT DOES NOT INITIALIZE CUDA:
 - device = "cuda" or device = torch.device("cuda") - just a string/object
-- DataLoader creation - workers spawn lazily when iteration starts
-- Function definitions with CUDA code inside - only executed when called
+- Function definitions containing .cuda()/.to(device) - defining a function does NOT execute it
 
 Does this code initialize CUDA before multiprocessing Process/Pool creation without setting spawn method?
 
-Check:
-1. Is .cuda() or .to(cuda_device) called on tensor/model BEFORE Process/Pool?
-2. Is the start method set to 'spawn' (via mp.set_start_method or mp.get_context)?
+ALL THREE must be true for YES:
+1. CUDA actually initialized IN THE MAIN/CALLING SCOPE (not inside a worker function): .cuda() or .to(cuda_device) called at module level or in main() before Process/Pool creation. If .cuda() only appears inside a function passed as target= to Process(), it runs INSIDE the worker — answer NO.
+2. Forking provably happens AFTER CUDA init via multiprocessing.Process() or Pool() (NOT DataLoader — see below). The fork must appear on a line AFTER the CUDA init line in the visible code. If model.to(device) or .cuda() appears AFTER the Process()/Pool() creation line, the fork happens FIRST — answer NO.
+3. No spawn method set: no mp.set_start_method('spawn') or mp.get_context('spawn')
 
-YES = Bug: CUDA init before Process/Pool creation WITHOUT spawn method set (uses fork default)
-NO = Clean: spawn method is set, or CUDA init only happens inside workers, or only device strings (no actual CUDA init)
+NOT a bug (answer NO):
+- DataLoader(num_workers=N) — PyTorch DataLoader workers do NOT inherit CUDA context. They perform CPU-side data loading only; CUDA operations happen in the main process after the batch is returned. This is the standard, safe PyTorch pattern regardless of num_workers. Only flag DataLoader if workers explicitly call .cuda() or .to(cuda_device) inside the worker_init_fn or collate function.
+- CUDA calls (.cuda(), .to(device)) only appear INSIDE a worker function that is passed as target= to Process() — these run AFTER forking, not before
+- mp.set_start_method('spawn') or mp.get_context('spawn') is used — spawn avoids fork entirely
+- torch.distributed / torchrun / DDP patterns: processes are pre-spawned by the launcher before main() runs
+- If no multiprocessing.Process() or Pool() is visible anywhere in this code snippet, answer NO. Do not infer that forking must exist somewhere else in the codebase.
+- If the entire visible code is a standalone function (e.g., def init_model(...), def train_step(...)) that moves a model to a device, and there is no multiprocessing import or usage visible — answer NO
+- Only device strings/objects created, no actual CUDA initialization
+
+YES = Bug: CUDA init before multiprocessing.Process()/Pool() fork, no spawn method
+NO = Clean: spawn method set, CUDA only in workers, no Process/Pool visible, DDP/torchrun, DataLoader workers (CPU-only), or only device objects
 """
 
 warning_message = """

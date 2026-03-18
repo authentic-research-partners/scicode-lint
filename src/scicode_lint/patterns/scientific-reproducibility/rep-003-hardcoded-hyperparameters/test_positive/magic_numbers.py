@@ -22,5 +22,6 @@ def train(model, data, labels, criterion):
             batch = data[i : i + 32]
             batch_labels = labels[i : i + 32]
             loss = criterion(model(batch), batch_labels)
+            optimizer.zero_grad()
             loss.backward()
             optimizer.step()

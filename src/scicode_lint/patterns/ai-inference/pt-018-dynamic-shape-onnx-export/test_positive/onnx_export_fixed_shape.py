@@ -2,37 +2,35 @@ import torch
 import torch.nn as nn
 
 
-class SimpleClassifier(nn.Module):
-    def __init__(self, input_size, hidden_size, num_classes):
+class SentimentRNN(nn.Module):
+    def __init__(self, vocab_size, embed_dim, hidden_dim, num_classes):
         super().__init__()
-        self.fc1 = nn.Linear(input_size, hidden_size)
-        self.relu = nn.ReLU()
-        self.fc2 = nn.Linear(hidden_size, num_classes)
+        self.embedding = nn.Embedding(vocab_size, embed_dim)
+        self.rnn = nn.GRU(embed_dim, hidden_dim, batch_first=True)
+        self.fc = nn.Linear(hidden_dim, num_classes)
 
     def forward(self, x):
-        x = self.fc1(x)
-        x = self.relu(x)
-        x = self.fc2(x)
-        return x
+        embedded = self.embedding(x)
+        _, hidden = self.rnn(embedded)
+        return self.fc(hidden.squeeze(0))
 
 
 def export_model(model, output_path):
     model.eval()
-
-    dummy_input = torch.randn(1, 128)
-
+    dummy_ids = torch.randint(0, 5000, (1, 64))
     torch.onnx.export(
         model,
-        dummy_input,
+        dummy_ids,
         output_path,
-        input_names=["input"],
-        output_names=["output"],
-        opset_version=11,
+        input_names=["token_ids"],
+        output_names=["sentiment_scores"],
+        verbose=True,
+        opset_version=14,
     )
-    print(f"Model exported to {output_path}")
 
 
-def deploy_model():
-    model = SimpleClassifier(128, 64, 10)
-    model.load_state_dict(torch.load("model.pth"))
-    export_model(model, "model.onnx")
+def run_export():
+    model = SentimentRNN(vocab_size=5000, embed_dim=128, hidden_dim=256, num_classes=3)
+    checkpoint = torch.load("sentiment_model.pth", weights_only=True)
+    model.load_state_dict(checkpoint)
+    export_model(model, "sentiment_model.onnx")

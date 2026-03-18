@@ -26,5 +26,7 @@ def information_gain(counts):
     """Information gain using scipy's approach with where()."""
     total = np.sum(counts)
     probs = counts / total
-    log_probs = np.where(probs > 0, np.log2(probs), 0)
+    safe_probs = np.maximum(probs, 1e-15)
+    log_probs = np.log2(safe_probs)
+    log_probs[probs == 0] = 0
     return -np.sum(probs * log_probs)

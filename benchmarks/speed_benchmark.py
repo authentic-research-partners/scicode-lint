@@ -281,7 +281,7 @@ def main() -> None:
         print(f"Error: Cannot connect to vLLM server at {VLLM_METRICS_URL}")
         print(f"Details: {e}")
         print("\nMake sure vLLM server is running:")
-        print("  bash src/scicode_lint/vllm/start_vllm.sh")
+        print("  scicode-lint vllm-server start")
         return
 
     # Start background monitoring

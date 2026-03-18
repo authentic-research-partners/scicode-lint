@@ -1,36 +1,26 @@
-"""Using numpy Generator for reproducible sampling instead of pandas."""
-
 import numpy as np
 import pandas as pd
 
 
-class ReproducibleSampler:
-    """Sampler using numpy Generator for consistent reproducibility."""
+class CrossValidationSampler:
+    def __init__(self, df: pd.DataFrame, n_folds: int = 5, seed: int = 42):
+        self.df = df
+        self.n_folds = n_folds
+        self.rng = np.random.RandomState(seed)
+        self._fold_indices = self._create_folds()
 
-    def __init__(self, seed: int = 42):
-        self.rng = np.random.default_rng(seed)
+    def _create_folds(self) -> list[np.ndarray]:
+        shuffled = self.df.sample(frac=1.0, random_state=self.rng).index
+        return np.array_split(shuffled, self.n_folds)
 
-    def sample_rows(self, df: pd.DataFrame, n: int) -> pd.DataFrame:
-        """Sample n rows reproducibly using pre-seeded generator."""
-        indices = self.rng.choice(len(df), size=n, replace=False)
-        return df.iloc[indices]
+    def get_fold(self, fold_idx: int) -> tuple[pd.DataFrame, pd.DataFrame]:
+        test_idx = self._fold_indices[fold_idx]
+        train_idx = self.df.index.difference(test_idx)
+        return self.df.loc[train_idx], self.df.loc[test_idx]
 
-    def bootstrap(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Bootstrap sample using pre-seeded generator."""
-        indices = self.rng.choice(len(df), size=len(df), replace=True)
-        return df.iloc[indices]
-
-
-def create_stratified_sample(
-    df: pd.DataFrame,
-    group_col: str,
-    n_per_group: int,
-    seed: int = 42,
-) -> pd.DataFrame:
-    """Create stratified sample using numpy generator per group."""
-    rng = np.random.default_rng(seed)
-    samples = []
-    for _, group in df.groupby(group_col):
-        indices = rng.choice(len(group), size=min(n_per_group, len(group)), replace=False)
-        samples.append(group.iloc[indices])
-    return pd.concat(samples, ignore_index=True)
+    def bootstrap_evaluate(self, n_rounds: int = 100) -> list[pd.DataFrame]:
+        samples = []
+        for i in range(n_rounds):
+            boot = self.df.sample(frac=1.0, replace=True, random_state=self.rng.randint(0, 2**31))
+            samples.append(boot)
+        return samples

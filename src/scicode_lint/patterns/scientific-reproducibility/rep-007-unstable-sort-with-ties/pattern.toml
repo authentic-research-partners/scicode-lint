@@ -27,25 +27,30 @@ question = """
 Analyze sorting for stable tie-breaking.
 
 NumPy's default sort (quicksort) does not guarantee stable ordering of equal elements.
-This matters when data has REALISTIC ties (integers, discrete categories, binned values).
+This matters when data has REALISTIC ties AND tie-breaking order CHANGES the scientific outcome.
 
-Does this code sort INTEGER or DISCRETE data with potential ties without stable sort?
+BOTH conditions must be true for YES:
+1. Data is integer/discrete with likely ties (integer scores, categories, binned values, counts)
+2. Tie-breaking order CHANGES the scientific outcome (different results depending on which tied item comes first)
+
+Does this code sort INTEGER or DISCRETE data where tie-breaking order affects results?
 
 Look for:
 - np.argsort() without kind='stable' on integer scores, rankings, categories
-- Sorting discrete data (counts, labels, binned values) where ties are common
+- Sorting discrete data (counts, labels, binned values) where ties are common AND order matters
 
-NOT a bug (answer NO) - ties are practically impossible or already handled:
-- Continuous float outputs from neural networks (softmax, log_probs, embeddings)
+NOT a bug (answer NO) - ties impractical, already handled, or outcome unaffected:
+- Continuous float outputs from neural networks (softmax, log_probs, embeddings, predicted spectra, intensities, distributions) — ANY predicted values from neural network forward passes
 - Random floating-point values (np.random.randn)
 - Computed distances, similarities, or other continuous metrics
-- Top-k selection on continuous scores (tie-breaking order doesn't matter if no ties)
+- Ties exist but tied items are scientifically interchangeable (selecting any k from equal-valued pool gives same downstream result)
 - kind='stable' already specified
 - np.lexsort() (always uses mergesort/stable internally)
-- pandas sort_values() with kind='mergesort' or explicit tiebreaker column
+- pandas sort_values() with kind='mergesort'
+- pandas sort_values() with MULTIPLE columns where a tiebreaker column makes ties unique (e.g., sort_values(["score", "id"]) — the "id" column breaks ties deterministically)
 
-YES = Bug: Unstable sort on INTEGER/DISCRETE data with likely ties
-NO = Clean: Continuous ML outputs (ties impractical), kind='stable' used, or data is unique
+YES = Bug: Unstable sort on INTEGER/DISCRETE data where tie-breaking order changes scientific outcome
+NO = Clean: Continuous outputs (ties impractical), tied items are interchangeable, kind='stable' used, or data is unique
 """
 
 warning_message = """
@@ -67,7 +72,7 @@ min_confidence = 0.85
 type = "function"
 name = "rank_predictions"
 snippet = "np.argsort(levels)"
-lines = [9, 15, 20, 25]
+lines = [9]
 
 [[tests.negative]]
 file = "test_negative/unique_values.py"
@@ -100,12 +105,12 @@ lines = [16, 21, 26]
 
 [[tests.positive]]
 file = "test_positive/quicksort_ranking.py"
-description = "Ranking and feature importance sorting using np.argsort() without stable sort on scores that may contain ties."
-expected_issue = "np.argsort() without kind='stable' parameter"
+description = "Ranking integer exam scores and severity levels using np.argsort() without kind='stable'."
+expected_issue = "np.argsort() without kind='stable' on integer scores with likely ties"
 min_confidence = 0.85
 
 [tests.positive.expected_location]
 type = "function"
 name = "rank_candidates"
-snippet = "order = np.argsort(-scores)"
+snippet = "np.argsort(-exam_scores)"
 lines = [5]

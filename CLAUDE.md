@@ -59,6 +59,10 @@ AI-powered linter for scientific Python code using local LLM (Qwen3 via vLLM).
 - `scan.py` - Repository scanner with two-stage filtering
 - ML import keywords configurable in `config.toml` → `[preprocessing]` section
 
+**Consolidated results (consolidated_results/):**
+- [consolidated_results/](consolidated_results/) - Unified performance report across all eval layers
+- `generate_consolidated_report.py` - Reads JSON, DB, markdown → single `CONSOLIDATED_REPORT.md`
+
 **Real-world validation (real_world_demo/):**
 - [real_world_demo/README.md](real_world_demo/README.md) - Run scicode-lint on real scientific ML code
 - Data sources: `sources/papers_with_code/` (PapersWithCode repos), `sources/leakage_paper/` (Yang et al. ASE'22)
@@ -107,8 +111,8 @@ scicode-lint uses a small local model (fits in 16GB VRAM) - a deliberate choice 
 
 ```bash
 pip install scicode-lint[vllm-server]
-bash src/scicode_lint/vllm/start_vllm.sh   # Auto-detects GPU, validates FP8 support (default port: 5001)
-python -m scicode_lint lint myfile.py
+scicode-lint vllm-server start              # Auto-detects GPU, validates FP8 support (default port: 5001)
+scicode-lint lint myfile.py
 ```
 
 **📖 Complete setup:** [INSTALLATION.md](INSTALLATION.md)
@@ -278,7 +282,8 @@ git config core.hooksPath scripts
 ```bash
 ruff check . && ruff format .  # Code style
 mypy .                         # Type checking (patterns/ excluded via pyproject.toml)
-pytest                         # Tests
+python -m py_compile path/to/new_or_changed_file.py  # Catches circular imports that pytest misses
+pytest                         # Tests (last — slowest)
 ```
 
 ### Type Hints & Documentation

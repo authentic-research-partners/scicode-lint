@@ -21,7 +21,7 @@ np.log(0) returns -inf silently and poisons downstream computations. Use np.log1
 """
 
 tags = []
-related_patterns = []
+related_patterns = ["num-005"]
 references = [
     "https://numpy.org/doc/stable/reference/generated/numpy.log.html",
     "https://numpy.org/doc/stable/reference/generated/numpy.log1p.html",
@@ -38,12 +38,12 @@ Correct approach: Use np.log(x + epsilon), np.log1p(x), or np.maximum(x, epsilon
 Does this code call log on values that could be zero?
 
 Look for:
-- np.log(probabilities) where probs could contain zeros
+- np.log/np.log2/np.log10(probabilities) where values could contain zeros
 - Log-likelihood or entropy calculations without guards
-- KL divergence: np.log(p/q) where q could be zero
+- KL divergence: np.log(p/q) where p could be zero (log of zero), or q could be zero (division by zero producing inf/NaN before log)
 
-YES = Bug found: np.log() on potentially zero values without guard
-NO = Correct: has epsilon guard, uses log1p, or input guaranteed positive
+YES = Bug found: np.log/np.log2/np.log10() on potentially zero values without guard
+NO = Correct: has epsilon guard (np.clip, np.maximum), uses log1p, or input guaranteed positive by domain
 """
 
 warning_message = """
@@ -71,6 +71,18 @@ type = "function"
 name = "compute_entropy"
 snippet = "log_probs = np.log(probabilities)"
 lines = [5]
+
+[[tests.positive]]
+file = "test_positive/unguarded_log.py"
+description = "np.log() on raw data without guard, producing -inf for zero inputs"
+expected_issue = "np.log() called on values that could be zero without guard"
+min_confidence = 0.85
+
+[tests.positive.expected_location]
+type = "function"
+name = "log_transform"
+snippet = "transformed = np.log(data)"
+lines = [11]
 
 [[tests.positive]]
 file = "test_positive/log_calculations.py"

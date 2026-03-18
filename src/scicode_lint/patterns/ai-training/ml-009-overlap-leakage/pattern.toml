@@ -29,37 +29,37 @@ references = [
 
 [detection]
 question = """
-Analyze this code for OVERLAP LEAKAGE where train and test data derive from the same source without guaranteed disjoint splitting.
+Analyze this code for OVERLAP LEAKAGE where a single undivided dataset IN THIS CODE is split unsafely.
 
 WHY THIS MATTERS: If train and test datasets both come from the same source data without using a proper splitting function, they may contain overlapping data points. The model would be evaluated on data it was trained on.
 
+CRITICAL: This bug requires identifying BOTH (a) a single undivided dataset in memory AND (b) an unsafe split operation on it. If data is loaded from separate sources or pre-split upstream, there is no overlap risk.
+
 OVERLAP LEAKAGE EXISTS when:
 
-1. UNSAFE MANUAL SPLITTING:
+1. UNSAFE MANUAL SPLITTING of a single dataset:
    - data.sample(frac=0.8) for train AND data.sample(frac=0.2) for test (may overlap!)
    - Random index selection without ensuring disjointness
    - Manual slicing with potential overlap (e.g., data[:800] and data[700:])
 
-2. SAME SOURCE, NO SPLIT FUNCTION:
-   - Both train_data and test_data assigned from same DataFrame/array
-   - Using iloc/loc indexing without verified disjoint indices
+2. SAME IN-MEMORY SOURCE, NO SPLIT FUNCTION:
+   - Both train_data and test_data assigned from same DataFrame/array variable
    - Filtering same dataset with conditions that overlap (e.g., score > 0.5 AND score > 0.3)
-
-3. DUPLICATE-PRONE OPERATIONS:
-   - pd.concat() or np.vstack() combining data before any split
-   - Merging datasets that may share rows
 
 NO OVERLAP (correct patterns):
 - sklearn.model_selection.train_test_split() - guarantees disjoint indices
+- Sequential slicing: data[:n] and data[n:] — guaranteed disjoint
 - Explicit index sets: train_idx, test_idx = indices[:800], indices[800:]
+- Pre-split loading: loading from separate directories, Dataset("train")/Dataset("test"), separate config loaders, external split files
 - Separate data sources: train from file A, test from file B
 - Cross-validation with proper fold handling
-- Mutually exclusive filters: data[col == "train"] vs data[col == "test"]
+- Mutually exclusive column filters: data[data["split"] == "train"] vs data[data["split"] == "test"] — a pre-annotated split column guarantees disjoint sets
+- Demo/visualization code that doesn't run actual model training
 
-Does train and test data flow from the same source WITHOUT a guaranteed disjoint split?
+Does THIS CODE contain a single undivided dataset that is split unsafely?
 
-YES = Bug found: train/test derive from same source, may overlap
-NO = Correct: proper splitting ensures no overlap, OR data from separate sources
+YES = Bug found: single dataset in memory split without guaranteed disjointness
+NO = Correct: proper splitting, sequential slices, pre-split data, or separate sources
 """
 
 warning_message = """

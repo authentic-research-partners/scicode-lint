@@ -108,6 +108,11 @@ Quick guide to find the right documentation for your needs.
 │   ├── README.md                  # Pattern guide (structure, format, detection question template)
 │   └── {category}/{pattern}/       # Individual pattern directories
 │
+├── consolidated_results/            # Unified performance report
+│   ├── README.md
+│   ├── generate_consolidated_report.py  # Reads JSON + DB → single report
+│   └── CONSOLIDATED_REPORT.md       # Generated output
+│
 ├── evals/                          # Evaluation framework
 │   ├── README.md                   # Pattern-specific evaluations
 │   ├── run_eval.py                 # Eval runner (use --skip-judge for fast mode)
@@ -169,6 +174,9 @@ Quick guide to find the right documentation for your needs.
 
 ### "I want to run evaluations"
 → [evals/README.md](evals/README.md) (pattern-specific) → [evals/integration/README.md](evals/integration/README.md) (multi-pattern)
+
+### "I want a consolidated performance report"
+→ Run `python consolidated_results/generate_consolidated_report.py`
 
 ### "I need project statistics"
 → Run `python scripts/project_stats_generate.py --help`

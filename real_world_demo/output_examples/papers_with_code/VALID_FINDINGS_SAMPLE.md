@@ -1,12 +1,12 @@
 # Valid Findings - Quick Verification Sample
 
-**10 verified findings** (2 critical + 8 high) with pattern diversity for fast manual verification.
+**10 verified findings** (3 critical + 7 high) with pattern diversity for fast manual verification.
 
 ## 1. ml-001 (critical)
 
 **File:** 
 **Repo:** [louzounlab__pygon](https://github.com/louzounlab/pygon)
-**Location:** function `_scale_matrices` (line 58)
+**Location:** function `calculate_features` (line 238)
 **Paper:** Planted Dense Subgraphs in Dense Random Graphs Can Be Recovered using Graph-based Machine Learning
 **Authors:** Itay Levinas, yoram louzoun
 
@@ -18,392 +18,102 @@
 
 **Code:**
 ```python
-self._labels += [labels]
-        self._scale_matrices()
+def calculate_features(graphs, params, graph_params):
+    adjacency_matrices, feature_matrices = [], []
+    for graph in graphs:
+        fc = FeatureCalculator(graph_params, graph, "", params['features'], dump=False, gpu=True, device=0)
+        adjacency_matrices.append(fc.adjacency_matrix)
+        feature_matrices.append(fc.feature_matrix)
 
-    def _scale_matrices(self):
-        scaler = StandardScaler()
-        all_matrix = np.vstack(self._feature_matrices)
-        scaler.fit(all_matrix)
+                                                                                                                   
+                                                                                                                     
+                                
+    scaler = StandardScaler()
+    all_matrix = np.vstack(feature_matrices)
+    scaler.fit(all_matrix)
+    for i in range(len(feature_matrices)):
+        feature_matrices[i] = scaler.transform(feature_matrices[i].astype('float64'))
+    return adjacency_matrices, feature_matrices
 ```
 
-**Verification reasoning:** VALID
-
-The scaler is fit on `all_matrix` which is the full dataset stacked together before any train/test split occurs. When `train()` later calls `pygon.run_pygon` with `check='split'`, the test split has already been scaled using statistics derived from it, causing data leakage. The scaling should happen inside each cross-validation fold or split.
+**Verification reasoning:** VALID: The scaler is fit on all feature matrices combined before the train/test split occurs in `split_into_folds`, meaning test data statistics leak into the scaler fitted on the full dataset. The comment in the code even acknowledges this ("Having all the graphs regardless whether they are training, eval of test") but incorrectly dismisses it. Fitting the scaler on all data inflates model performance by allowing test set distribution information to influence normalization.
 
 ---
 
-## 2. ml-007 (critical)
+## 2. ml-010 (critical)
 
 **File:** 
-**Repo:** [openclimatefix__graph_weather](https://github.com/openclimatefix/graph_weather)
-**Location:** function `Era5Dataset.__init__` (line 120)
-**Paper:** WeatherMesh-3: Fast and accurate operational global weather forecasting
-**Authors:** Haoxing Du et al.
+**Repo:** [BrunoScholles98__Deep-Learning-for-Bone-Health-Classification-through-X-ray-Imaging](https://github.com/BrunoScholles98/Deep-Learning-for-Bone-Health-Classification-through-X-ray-Imaging)
+**Location:** function `main` (line 199)
+**Paper:** Osteoporosis screening: Leveraging EfficientNet with complete and cropped facial panoramic radiography imaging
+**Authors:** Bruno Scholles Soares Dias et al.
 
-**Issue:** ml-007: Issue detected
+**Issue:** ml-010: Issue detected
 
-**Explanation:** Data leakage: fit_transform on test data means the test set uses its own statistics instead of training statistics. Use transform() on test data.
-
+**Explanation:** Multi-test leakage: No held-out test set. Validation set used for both tuning and final evaluation. Create a separate test set that is never used during model development.
 
 
 **Code:**
 ```python
-Arguments:
-            #TODO
-        """
-        ds = np.asarray(xarr.to_array())
-        ds = torch.from_numpy(ds)
-        ds -= ds.min(0, keepdim=True)[0]
-        ds /= ds.max(0, keepdim=True)[0]
+def main():
+    set_seed(SEED)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    log.info(f"Device: {device}")
+
+    train_ds = TripletVolumeDataset(DATA_DIR, "train", get_tf(True))
+    val_ds   = TripletVolumeDataset(DATA_DIR, "test",  get_tf(False))
+
+    train_ld = DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=True,
+                          num_workers=2, pin_memory=True)
+    val_ld   = DataLoader(val_ds,   batch_size=BATCH_SIZE, shuffle=False,
+                          num_workers=2, pin_memory=True)
+
+    model     = M3T(in_ch=3, out_ch=OUT_CHANNELS).to(device)
+    criterion = nn.CrossEntropyLoss()
+    optimizer = optim.AdamW(model.parameters(), lr=LR, weight_decay=WEIGHT_DECAY)
+    scaler    = GradScaler()
+
+    run_dir = os.path.join(OUTPUT_ROOT,
+                           datetime.now().strftime("M3T_%Y%m%d_%H%M%S"))
+    os.makedirs(run_dir, exist_ok=True)
+
+    cfg = {k:v for k,v in globals().items()
+           if k.isupper() and isinstance(v,(int,float,str,bool))}
+    json.dump(cfg, open(os.path.join(run_dir,"config.json"),"w"))
+
+    best_f1, patience = 0., 0
+    for epoch in range(1, EPOCHS+1):
+        tr_loss, tr_acc, tr_f1, _ = run_epoch(model, train_ld, criterion,
+                                             optimizer, scaler, device, True)
+        vl_loss, vl_acc, vl_f1, _ = run_epoch(model, val_ld,   criterion,
+                                             optimizer, scaler, device, False)
+
+        log.info(f"[{epoch:02d}/{EPOCHS}] "
+                 f"tr_loss={tr_loss:.4f} tr_acc={tr_acc:.3f} tr_f1={tr_f1:.3f} | "
+                 f"val_loss={vl_loss:.4f} val_acc={vl_acc:.3f} val_f1={vl_f1:.3f}")
+
+        if vl_f1 > best_f1:
+            best_f1, patience = vl_f1, 0
+            torch.save(model.state_dict(), os.path.join(run_dir,"best.pth"))
+        else:
+            patience += 1
+            if patience >= EARLY_STOP:
+                log.info("Early stopping."); break
+
+    log.info(f"Melhor F1 (val): {best_f1:.3f}")
 ```
 
-**Verification reasoning:** VALID: This is a real issue that should be fixed
-
-The code performs min-max normalization using each dataset instance's own statistics (`ds.min`, `ds.max`). If `Era5Dataset` is instantiated separately for train and test splits, each will be normalized by its own min/max values rather than the training set's statistics — this is the same data leakage problem as `fit_transform` on test data, just implemented manually. The fix requires computing normalization statistics from the training set and passing them in (e.g., via the `transform` parameter that's already accepted but unused).
+**Verification reasoning:** VALID: The code only defines two datasets — `train` and `test` (used as validation) — with no separate held-out test set. The `test` split is used for both early stopping decisions and best model selection (`best_f1`), meaning final reported performance (`best F1 (val): ...`) is on data that influenced training decisions. This is classic test set leakage via multi-test contamination.
 
 ---
 
-## 3. perf-001 (high)
+## 3. pt-015 (high)
 
 **File:** 
 **Repo:** [czq142857__NDC](https://github.com/czq142857/NDC)
-**Location:** function `get_v_t_count` (line 61)
+**Location:** function `testing_section` (line 385)
 **Paper:** Neural Dual Contouring
 **Authors:** Zhiqin Chen et al.
-
-**Issue:** perf-001: Issue detected
-
-**Explanation:** Python loop over NumPy array: 100-1000x slower than vectorized operation. Use broadcasting, np.where, or fancy indexing.
-
-
-
-**Code:**
-```python
-def get_v_t_count(q, name_list):
-    name_num = len(name_list)
-    for nid in range(name_num):
-        pid = name_list[nid][0]
-        idx = name_list[nid][1]
-        gt_obj_name = name_list[nid][2]
-        pred_obj_name = name_list[nid][3]
-
-
-                
-                  
-        v,t = load_obj(pred_obj_name)
-        
-        slot = np.zeros([180],np.int32)
-
-        for i in range(len(t)):
-            for j in range(3):
-                v1i = t[i,(j)%3]
-                v2i = t[i,(j+1)%3]
-                v3i = t[i,(j+2)%3]
-                
-                v1 = v[v1i]
-                v2 = v[v2i]
-                v3 = v[v3i]
-
-                v12 = v2-v1
-                v13 = v3-v1
-
-                s_a = np.sqrt( np.sum(v12*v12)*np.sum(v13*v13) )
-                if s_a<1e-10:
-                    s_a = 1e-10
-                cos_a = np.sum(v12*v13)/s_a
-                if cos_a>1: cos_a=1
-                if cos_a<-1: cos_a=-1
-                a = (np.arccos(cos_a)/np.pi*180).astype(np.int32)
-                if a>=180:
-                    a = 180-1
-                slot[a] += 1
-
-
-        print(idx)
-        q.put([idx,slot])
-```
-
-**Verification reasoning:** VALID: The nested Python loops over triangle array `t` (lines 61-83) iterate element-by-element to compute per-vertex angles, which is exactly the 100-1000x slower pattern. This could be fully vectorized using NumPy fancy indexing to gather all vertex triplets at once, then computing dot products and arccos across the entire triangle array in batch. For meshes with thousands of triangles, this loop is a significant bottleneck.
-
----
-
-## 4. rep-002 (high)
-
-**File:** 
-**Repo:** [lsh0520__3d-molm](https://github.com/lsh0520/3d-molm)
-**Location:** function `main` (line 23)
-**Paper:** Towards 3D Molecule-Text Interpretation in Language Models
-**Authors:** Sihang Li et al.
-
-**Issue:** rep-002: Issue detected
-
-**Explanation:** CUDA non-determinism: some GPU ops are non-deterministic by default. Set torch.use_deterministic_algorithms(True) and torch.backends.cudnn.benchmark = False.
-
-
-
-**Code:**
-```python
-def main(args):
-    pl.seed_everything(args.seed)
-           
-    if args.init_checkpoint:
-        model = Blip2Stage2.load_from_checkpoint(args.init_checkpoint, strict=False, args=args)
-        print(f"loaded init checkpoint from {args.init_checkpoint}")
-    elif args.stage2_path:
-        model = Blip2Stage2(args)
-        ckpt = torch.load(args.stage2_path, map_location='cpu')
-        model.load_state_dict(ckpt['state_dict'], strict=False)
-        print(f"loaded stage2 model from {args.stage2_path}")
-    elif args.stage1_path:
-        model = Blip2Stage2(args)
-        model.load_from_stage1_checkpoint(args.stage1_path)
-        print(f"loaded stage1 model from {args.stage1_path}")
-    else:
-        model = Blip2Stage2(args)
-
-    print(' total params:', sum(p.numel() for p in model.parameters()))
-
-    tokenizer = model.blip2opt.llm_tokenizer
-          
-
-    dm = Stage2DM(args.mode, args.num_workers, args.batch_size, args.root, args.text_max_len, model.blip2opt.dictionary, tokenizer, args)
-
-    callbacks = []
-    callbacks.append(plc.ModelCheckpoint(dirpath="all_checkpoints/"+args.filename+"/", 
-                                         filename='{epoch:02d}', 
-                                         every_n_epochs=args.save_every_n_epochs, 
-                                         save_last=True, 
-                                         save_top_k=-1,
-                                         save_on_train_epoch_end=True))
-    if len(args.devices.split(',')) > 1:
-        if args.strategy_name == 'deepspeed':
-            strategy = MyDeepSpeedStrategy(stage=2)
-        else:
-            strategy = strategies.DDPStrategy(start_method='spawn')
-    else:
-        strategy = 'auto'
-        args.devices = eval(args.devices)
-    logger = CSVLogger(save_dir=f'./all_checkpoints/{args.filename}/')
-
-    trainer = Trainer(
-        accelerator=args.accelerator,
-        devices=args.devices,
-        precision=args.precision,
-        max_epochs=args.max_epochs,
-        accumulate_grad_batches=args.accumulate_grad_batches,
-        check_val_every_n_epoch=args.check_val_every_n_epoch,
-        callbacks=callbacks,
-        strategy=strategy,
-        logger=logger,
-    )
-
-    if args.mode == 'pretrain':
-        trainer.fit(model, datamodule=dm)
-    elif args.mode == 'ft':
-        trainer.fit(model, datamodule=dm)
-        trainer.test(model, datamodule=dm)
-    elif args.mode == 'eval':
-        trainer.fit_loop.epoch_progress.current.completed = args.caption_eval_epoch - 1
-        trainer.test(model, datamodule=dm)
-    else:
-        raise NotImplementedError()
-```
-
-**Verification reasoning:** VALID: The code calls `pl.seed_everything(args.seed)` but never sets `torch.use_deterministic_algorithms(True)` or `torch.backends.cudnn.benchmark = False`, meaning CUDA operations (scatter, atomics, etc.) remain non-deterministic regardless of the seed. Notably, `torch.set_float32_matmul_precision('medium')` further reduces precision reproducibility. One mitigating caveat: Flash Attention is enabled by default (`args.enable_flash = True`), which is incompatible with `use_deterministic_algorithms(True)` and would require disabling flash attention to achieve full determinism.
-
----
-
-## 5. perf-004 (high)
-
-**File:** 
-**Repo:** [cbuelt__pfno](https://github.com/cbuelt/pfno)
-**Location:** method `Spatial_CRPS.calculate_score` (line 70)
-**Paper:** Probabilistic neural operators for functional uncertainty quantification
-**Authors:** Christopher Bülte et al.
-
-**Issue:** perf-004: Issue detected
-
-**Explanation:** Materializing large intermediate arrays wastes memory. Use np.linalg.norm or in-place operations to avoid temporary allocations.
-
-
-
-**Code:**
-```python
-def calculate_score(self, x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
-        """Calculates the CRPS for two tensors, without aggregating.
-
-        Args:
-            x (torch.Tensor): Model x (Batch size, ..., n_samples)
-            y (torch.Tensor): Target (Batch size, ..., 1)
-
-        Returns:
-            torch.Tensor: CRPS
-        """
-        n_samples = x.size()[-1]
-
-                                               
-        if len(x.size()) != len(y.size()):
-            y = torch.unsqueeze(y, dim=-1)
-
-                         
-        es_12 = torch.abs(x-y).mean(axis = -1)
-
-        diff = torch.unsqueeze(x, dim=-2) - torch.unsqueeze(x, dim=-1)
-        es_22 = torch.abs(diff).sum(axis = (-1,-2))
-
-        score = es_12 - es_22 / (2 * n_samples * (n_samples - 1))
-        return score
-```
-
-**Verification reasoning:** VALID: The `diff = torch.unsqueeze(x, dim=-2) - torch.unsqueeze(x, dim=-1)` line materializes a full O(n_samples²) pairwise difference tensor across all batch and spatial dimensions, which grows quadratically with ensemble size. For physics simulation data with large spatial fields (this appears to be ERA5 weather data), this intermediate tensor can be enormous and cause OOM or severe memory pressure. The energy score term for CRPS can be computed more memory-efficiently using a sequential or chunked approach rather than materializing the full pairwise matrix.
-
----
-
-## 6. perf-002 (high)
-
-**File:** 
-**Repo:** [MLRG-CEFET-RJ__stconvs2s](https://github.com/MLRG-CEFET-RJ/stconvs2s)
-**Location:** function `run_arima` (line 74)
-**Paper:** STConvS2S: Spatiotemporal Convolutional Sequence to Sequence Network for Weather Forecasting
-**Authors:** Rafaela Castro et al.
-
-**Issue:** perf-002: Issue detected
-
-**Explanation:** Array allocation in loop: creating arrays inside loops causes repeated malloc/free operations. Pre-allocate the output array before the loop and fill it using indexing.
-
-
-**Code:**
-```python
-def run_arima(df, chirps, step):
-    series = None
-    rmse_val, mae_val = 0.,0. 
-    rmse_mean, mae_mean = -999., -999.
-    lat = df['lat'].unique()
-    lon = df['lon'].unique()
-    try:
-        series = df['precip'] if (chirps) else df['air_temp']
-        if ((series > 0).any()):
-            split = len(series) - (step + 5)
-            train = series[:split].values
-            test = series[split:].values
-            test_sequence = create_test_sequence(test, step)
-            for observation, sequence in zip(test,test_sequence):
-                start_index = len(train)
-                end_index = start_index + (step-1)
-                model = SARIMAX(train, order=(5,0,1)) 
-                results = model.fit(disp=False) 
-                pred_sequence = results.predict(start=start_index, end=end_index, dynamic=False)
-                rmse_val += rmse(sequence, pred_sequence) 
-                mae_val += mean_absolute_error(sequence, pred_sequence)
-                np.append(train,observation) 
-            
-            rmse_mean = rmse_val/len(test_sequence) 
-            mae_mean = mae_val/len(test_sequence)
-            print(f'\n=> Model ARIMA lat: {lat}, lon: {lon}')
-            print(f'RMSE: {rmse_mean:.8f}')
-            print(f'MAE: {mae_mean:.8f}')    
-        else:
-            print(f'\n** lat: {lat}, lon: {lon} has all zero values')
-    except Exception as e:
-        print(f'\n## lat: {lat}, lon: {lon} error: {e}')
-    
-    sys.stdout.flush()
-    return (rmse_mean, mae_mean)
-```
-
-**Verification reasoning:** VALID: `np.append(train, observation)` at line 74 creates a new array on every loop iteration (np.append always allocates a new array), and the result is discarded — making this both a performance issue (repeated allocation/deallocation each iteration) and a correctness bug (the training set never actually grows as intended). The intended rolling-window ARIMA update is silently broken.
-
----
-
-## 7. pt-007 (high)
-
-**File:** 
-**Repo:** [openclimatefix__graph_weather](https://github.com/openclimatefix/graph_weather)
-**Location:** method `LitModel.plot_sample` (line 189)
-**Paper:** WeatherMesh-3: Fast and accurate operational global weather forecasting
-**Authors:** Haoxing Du et al.
-
-**Issue:** pt-007: Issue detected
-
-**Explanation:** Missing model.eval() leaves dropout active and batchnorm using batch statistics instead of learned running statistics, producing incorrect inference results.
-
-
-**Code:**
-```python
-def plot_sample(self, prev_inputs, target_residuals):
-        """Plot 2m_temperature and geopotential"""
-        prev_inputs = prev_inputs[:1, :, :, :]
-        target = target_residuals[:1, :, :, :]
-        sampler = Sampler()
-        preds = sampler.sample(self.model, prev_inputs)
-
-        fig1, ax = plt.subplots(2)
-        ax[0].imshow(preds[0, :, :, 78].T.cpu(), origin="lower", cmap="RdBu", vmin=-5, vmax=5)
-        ax[0].set_xticks([])
-        ax[0].set_yticks([])
-        ax[0].set_title("Diffusion sampling prediction")
-
-        ax[1].imshow(target[0, :, :, 78].T.cpu(), origin="lower", cmap="RdBu", vmin=-5, vmax=5)
-        ax[1].set_xticks([])
-        ax[1].set_yticks([])
-        ax[1].set_title("Ground truth")
-
-        fig2, ax = plt.subplots(2)
-        ax[0].imshow(preds[0, :, :, 12].T.cpu(), origin="lower", cmap="RdBu", vmin=-5, vmax=5)
-        ax[0].set_xticks([])
-        ax[0].set_yticks([])
-        ax[0].set_title("Diffusion sampling prediction")
-
-        ax[1].imshow(target[0, :, :, 12].T.cpu(), origin="lower", cmap="RdBu", vmin=-5, vmax=5)
-        ax[1].set_xticks([])
-        ax[1].set_yticks([])
-        ax[1].set_title("Ground truth")
-
-        return fig1, fig2
-```
-
-**Verification reasoning:** VALID: The `plot_sample` method is called from `on_train_epoch_start`, meaning `self.model` is in training mode when `sampler.sample(self.model, prev_inputs)` runs. Without `self.model.eval()`, dropout stays active and batchnorm uses batch statistics during this diffusion sampling, producing noisy/incorrect visualization samples. The model also isn't restored to training mode afterward (though it stays in training mode since `eval()` was never called, so that part is fine).
-
----
-
-## 8. num-005 (high)
-
-**File:** 
-**Repo:** [ArnaudFerre__C-Norm](https://github.com/ArnaudFerre/C-Norm)
-**Location:** function `normalizeEmbedding` (line 49)
-**Paper:** C-Norm: a neural approach to few-shot entity normalization
-**Authors:** Arnaud Ferré et al.
-
-**Issue:** num-005: Issue detected
-
-**Explanation:** Division by zero in normalization: std is 0 for constant features, producing inf or NaN. Check for zero std and handle it.
-
-
-
-**Code:**
-```python
-def normalizeEmbedding(vst_onlyTokens):
-
-    for token in vst_onlyTokens.keys():
-        vst_onlyTokens[token] = vst_onlyTokens[token] / numpy.linalg.norm(vst_onlyTokens[token])
-
-    return vst_onlyTokens
-```
-
-**Verification reasoning:** VALID
-
-The code divides each token embedding by its L2 norm (`numpy.linalg.norm`), which returns 0.0 for a zero vector. This produces `NaN` values (0/0) rather than `inf`, but the result is equally problematic — NaN values would silently propagate through all downstream neural network computations (the TensorFlow/Keras model visible in imports). There is no guard against zero-norm vectors anywhere in the function.
-
----
-
-## 9. pt-015 (high)
-
-**File:** 
-**Repo:** [GentleDell__Better-Patch-Stitching](https://github.com/GentleDell/Better-Patch-Stitching)
-**Location:** function `main` (line 114)
-**Paper:** Better Patch Stitching for Parametric Surface Reconstruction
-**Authors:** Zhantao Deng et al.
 
 **Issue:** pt-015: Issue detected
 
@@ -412,24 +122,25 @@ The code divides each token embedding by its L2 norm (`numpy.linalg.norm`), whic
 
 **Code:**
 ```python
-if args.resume:
-    print("Resuming training")
-    trstate = torch.load(helpers.jn(args.output, 'chkpt.tar'))
-    model.load_state_dict(trstate['weights'])
-    opt.load_state_dict(trstate['optimizer'])
+print('loading net...')
+    if net_bool and (FLAGS.method == "undc" or FLAGS.input_type != "sdf"):
+        network_bool.load_state_dict(torch.load(FLAGS.checkpoint_dir+"/weights_"+FLAGS.method+"_"+FLAGS.input_type+"_bool.pth"))
+        print('network_bool weights loaded')
+    if net_float:
+        network_float.load_state_dict(torch.load(FLAGS.checkpoint_dir+"/weights_"+FLAGS.method+"_"+FLAGS.input_type+"_float.pth"))
 ```
 
-**Verification reasoning:** VALID: `torch.load()` is called without `map_location` at line 114. The code uses a `gpu` variable and `DataLoaderDevice` suggesting GPU-aware training, so a checkpoint saved on GPU will fail to load on a CPU-only system. The `gpu` variable is already in scope and should be passed as `map_location`.
+**Verification reasoning:** VALID: `torch.load()` is called without `map_location` on lines 385 and 388, which will fail when loading GPU-saved checkpoints on CPU-only systems. The code does use a `device` variable elsewhere (lines 405-407), confirming device-awareness exists, but the load calls don't use it. Fix: `torch.load(..., map_location=device)`.
 
 ---
 
-## 10. rep-002 (high)
+## 4. rep-002 (high)
 
 **File:** 
-**Repo:** [rose-stl-lab__spherical-dyffusion](https://github.com/rose-stl-lab/spherical-dyffusion)
-**Location:** function `main` (line 388)
-**Paper:** Probabilistic Emulation of a Global Climate Model with Spherical DYffusion
-**Authors:** Salva Rühling Cachay et al.
+**Repo:** [louzounlab__pygon](https://github.com/louzounlab/pygon)
+**Location:** function `train_pygon` (line 300)
+**Paper:** Planted Dense Subgraphs in Dense Random Graphs Can Be Recovered using Graph-based Machine Learning
+**Authors:** Itay Levinas, yoram louzoun
 
 **Issue:** rep-002: Issue detected
 
@@ -439,33 +150,426 @@ if args.resume:
 
 **Code:**
 ```python
-def main(yaml_config: str):
-    dist = Distributed.get_instance()
-    if fme.using_gpu():
-        torch.backends.cudnn.benchmark = True
-    with open(yaml_config, "r") as f:
-        data = yaml.safe_load(f)
-    train_config: TrainConfig = dacite.from_dict(
-        data_class=TrainConfig,
-        data=data,
-        config=dacite.Config(strict=True),
-    )
+def train_pygon(training_features, training_adjs, training_labels, eval_features, eval_adjs, eval_labels,
+                params, class_weights, activations, unary, coeffs, graph_params):
+    device = torch.device('cuda:1') if torch.cuda.is_available() else torch.device('cpu')
+    pygon = PYGONModel(n_features=training_features[0].shape[1], hidden_layers=params["hidden_layers"],
+                       dropout=params["dropout"],
+                       activations=activations, p=graph_params["probability"], normalization=params["edge_normalization"])
+    pygon.to(device)
+    opt = params["optimizer"](pygon.parameters(), lr=params["lr"], weight_decay=params["regularization"])
 
-    if not os.path.isdir(train_config.experiment_dir):
-        os.makedirs(train_config.experiment_dir)
-    with open(os.path.join(train_config.experiment_dir, "config.yaml"), "w") as f:
-        yaml.dump(data, f, default_flow_style=False, sort_keys=False)
-    train_config.configure_logging(log_filename="out.log")
-    env_vars = logging_utils.retrieve_env_vars()
-    gcs_utils.authenticate()
-    logging_utils.log_versions()
-    beaker_url = logging_utils.log_beaker_url()
-    train_config.configure_wandb(env_vars=env_vars, resume=True, notes=beaker_url)
-    trainer = Trainer(train_config)
-    trainer.train()
-    logging.info("DONE ---- rank %d" % dist.rank)
+    n_training_graphs = len(training_labels)
+    graph_size = graph_params["vertices"]
+    n_eval_graphs = len(eval_labels)
+
+    counter = 0                      
+    min_loss = None
+    for epoch in range(params["epochs"]):
+                                                                        
+        training_graphs_order = np.arange(n_training_graphs)
+        np.random.shuffle(training_graphs_order)
+        for i, idx in enumerate(training_graphs_order):
+            training_mat = torch.tensor(training_features[idx], device=device)
+            training_adj, training_lbs = map(lambda x: torch.tensor(data=x[idx], dtype=torch.double, device=device),
+                                             [training_adjs, training_labels])
+            pygon.train()
+            opt.zero_grad()
+            output_train = pygon(training_mat, training_adj)
+            output_matrix_flat = (torch.mm(output_train, output_train.transpose(0, 1)) + 1 / 2).flatten()
+            training_criterion = build_weighted_loss(unary, class_weights, training_lbs)
+            loss_train = coeffs[0] * training_criterion(output_train.view(output_train.shape[0]), training_lbs) + \
+                coeffs[1] * pairwise_loss(output_matrix_flat, training_adj.flatten()) + \
+                coeffs[2] * binomial_reg(output_train, graph_params)
+            loss_train.backward()
+            opt.step()
+
+                                                                          
+        graphs_order = np.arange(n_eval_graphs)
+        np.random.shuffle(graphs_order)
+        outputs = torch.zeros(graph_size * n_eval_graphs, dtype=torch.double)
+        output_xs = torch.zeros(graph_size ** 2 * n_eval_graphs, dtype=torch.double)
+        adj_flattened = torch.tensor(np.hstack([eval_adjs[idx].flatten() for idx in graphs_order]))
+        for i, idx in enumerate(graphs_order):
+            eval_mat = torch.tensor(eval_features[idx], device=device)
+            eval_adj, eval_lbs = map(lambda x: torch.tensor(data=x[idx], dtype=torch.double, device=device),
+                                     [eval_adjs, eval_labels])
+            pygon.eval()
+            output_eval = pygon(eval_mat, eval_adj)
+            output_matrix_flat = (torch.mm(output_eval, output_eval.transpose(0, 1)) + 1 / 2).flatten()
+            output_xs[i * graph_size ** 2:(i + 1) * graph_size ** 2] = output_matrix_flat.cpu()
+            outputs[i * graph_size:(i + 1) * graph_size] = output_eval.view(output_eval.shape[0]).cpu()
+        all_eval_labels = torch.tensor(np.hstack([eval_labels[idx] for idx in graphs_order]), dtype=torch.double)
+        eval_criterion = build_weighted_loss(unary, class_weights, all_eval_labels)
+        loss_eval = (coeffs[0] * eval_criterion(outputs, all_eval_labels) +
+                     coeffs[1] * pairwise_loss(output_xs, adj_flattened) +
+                     coeffs[2] * binomial_reg(outputs, graph_params)).item()
+
+        if min_loss is None:
+            current_min_loss = loss_eval
+        else:
+            current_min_loss = min(min_loss, loss_eval)
+
+        if epoch >= 10 and params["early_stop"]:                                             
+            if min_loss is None:
+                min_loss = current_min_loss
+                torch.save(pygon.state_dict(), "tmp_time.pt")                        
+            elif loss_eval < min_loss:
+                min_loss = current_min_loss
+                torch.save(pygon.state_dict(), "tmp_time.pt")                        
+                counter = 0
+            else:
+                counter += 1
+                if counter >= 40:                         
+                    break
+                                                                         
+    pygon.load_state_dict(torch.load("tmp_time.pt"))
+    os.remove("tmp_time.pt")
+    return pygon
 ```
 
-**Verification reasoning:** VALID: The code explicitly sets `torch.backends.cudnn.benchmark = True` without setting `torch.use_deterministic_algorithms(True)`, which introduces non-determinism in GPU operations. This is a training script for an earth science model where reproducibility matters. The benchmark flag prioritizes speed over determinism, which can produce different results across runs.
+**Verification reasoning:** VALID: The `train_pygon` function uses CUDA without setting `torch.use_deterministic_algorithms(True)` or `torch.backends.cudnn.benchmark = False`, meaning GPU operations like `torch.mm` may produce non-deterministic results across runs. This is a real reproducibility concern for scientific code — results could vary between runs even with the same random seed. The function also uses `np.random.shuffle` without seeding, compounding the non-determinism issue.
+
+---
+
+## 5. num-005 (high)
+
+**File:** 
+**Repo:** [openclimatefix__graph_weather](https://github.com/openclimatefix/graph_weather)
+**Location:** method `Era5Dataset.__init__` (line 123)
+**Paper:** WeatherMesh-3: Fast and accurate operational global weather forecasting
+**Authors:** Haoxing Du et al.
+
+**Issue:** num-005: Issue detected
+
+**Explanation:** Division by zero when normalization factor (std, range, or norm) is zero for constant/zero-valued data, producing inf or NaN. Add an epsilon guard or explicit zero check before dividing.
+
+
+
+**Code:**
+```python
+def __init__(self, xarr, transform=None):
+        """
+        Arguments:
+            #TODO
+        """
+        ds = np.asarray(xarr.to_array())
+        ds = torch.from_numpy(ds)
+        ds -= ds.min(0, keepdim=True)[0]
+        ds /= ds.max(0, keepdim=True)[0]
+        ds = rearrange(ds, "C T H W -> T (H W) C")
+        self.ds = ds
+```
+
+**Verification reasoning:** VALID: The code performs min-max normalization at line 123 with `ds /= ds.max(0, keepdim=True)[0]`, but after subtracting the min (line 122), any constant channel will have `max == 0`, causing division by zero and producing `NaN` or `inf`. ERA5 climate data can absolutely contain constant-valued channels (e.g., land/sea masks, or channels with no variation in a selected time slice). There is no epsilon guard or zero check present.
+
+---
+
+## 6. pt-009 (high)
+
+**File:** 
+**Repo:** [BrunoScholles98__Deep-Learning-for-Bone-Health-Classification-through-X-ray-Imaging](https://github.com/BrunoScholles98/Deep-Learning-for-Bone-Health-Classification-through-X-ray-Imaging)
+**Location:** function `train_by_one_epoch` (line 107)
+**Paper:** Osteoporosis screening: Leveraging EfficientNet with complete and cropped facial panoramic radiography imaging
+**Authors:** Bruno Scholles Soares Dias et al.
+
+**Issue:** pt-009: Issue detected
+
+**Explanation:** Loss tensor accumulation: Accumulating loss tensors directly keeps entire computation graphs in memory, causing memory leaks. Extract the scalar value using loss.item() or loss.detach().cpu().item() before accumulating.
+
+
+**Code:**
+```python
+def train_by_one_epoch(model, criterion, optimizer, train_dl, all_steps_counter_train, writer):
+    accuracy_fnc = Accuracy(task='multiclass', num_classes=NUM_CLASSES).to(DEVICE)
+    mean_loss_train = 0
+    train_epoch_accuracy = 0
+
+    training_bar = tqdm.tqdm(enumerate(train_dl), total=len(train_dl))
+    training_bar.set_description("Training Progress (Epoch)")
+
+    for step_train, inp in training_bar:
+        inputs, labels = inp
+        inputs, labels = inputs.to(DEVICE), labels.to(DEVICE)
+        y_hat, loss = train_one_step(model, optimizer, criterion, inputs, labels)
+        mean_loss_train += loss
+        training_iteration_accuracy = accuracy_fnc(y_hat, labels)
+        train_epoch_accuracy += training_iteration_accuracy
+            
+        if step_train % LOG_INTERVAL == 0:
+            writer.add_scalar('Train/Iteration_Loss', loss, all_steps_counter_train)
+            writer.add_scalar('Train/Iteration_Accuracy', training_iteration_accuracy, all_steps_counter_train)
+        
+        all_steps_counter_train += 1
+
+    mean_loss_train /= len(train_dl)
+    train_epoch_accuracy /= len(train_dl)
+    
+    return all_steps_counter_train, mean_loss_train, train_epoch_accuracy
+```
+
+**Verification reasoning:** VALID: The code accumulates `loss` (a PyTorch tensor with attached computation graph) directly via `mean_loss_train += loss` at line 111. Since `train_one_step` returns the raw loss tensor after `.backward()`, the computation graph is retained across all loop iterations, causing GPU/CPU memory to grow with each step. Fix: use `loss.item()` when accumulating.
+
+---
+
+## 7. ml-010 (critical)
+
+**File:** 
+**Repo:** [songtaoliu0823__crebm](https://github.com/songtaoliu0823/crebm)
+**Location:** function `main` (line 90)
+**Paper:** Preference Optimization for Molecule Synthesis with Conditional Residual Energy-based Models
+**Authors:** Songtao Liu et al.
+
+**Issue:** ml-010: Issue detected
+
+**Explanation:** Multi-test leakage: No held-out test set. Validation set used for both tuning and final evaluation. Create a separate test set that is never used during model development.
+
+
+**Code:**
+```python
+train_data = TensorDataset(train_fps, train_costs)
+train_sampler = RandomSampler(train_data)
+train_dataloader = DataLoader(train_data, sampler=train_sampler, batch_size=args.batch_size)
+
+
+val_data = TensorDataset(val_fps, val_costs)
+val_sampler = RandomSampler(val_data)
+```
+
+**Verification reasoning:** VALID: The code splits data 90/10 into train/val with no separate test set, and the validation loss is used to track `best_val_loss` for model selection (line 98). This means the validation set serves dual purpose: hyperparameter/epoch selection and final evaluation, causing optimistic bias in reported performance. A held-out test set that is never used during training or model selection is missing.
+
+---
+
+## 8. pt-015 (high)
+
+**File:** 
+**Repo:** [kuangdai__sofa](https://github.com/kuangdai/sofa)
+**Location:** module `<module>` (line 98)
+**Paper:** Deep Learning Evidence for Global Optimality of Gerver's Sofa
+**Authors:** Kuangdai Leng et al.
+
+**Issue:** pt-015: Issue detected
+
+**Explanation:** torch.load() without map_location can fail on CPU-only systems. Always specify map_location='cpu' or map_location=device for portable model loading.
+
+
+**Code:**
+```python
+print("Last area:", gg["area"].item())
+
+    if largest_area >= 0.:
+        model.load_state_dict(torch.load(f"{out_dir}/best_model.pt"))
+        u1, u2 = model.forward(alpha)
+        gg = compute_area(alpha, beta1, beta2, u1, u2,
+                          n_areas=args.n_areas, return_geometry=True)
+```
+
+**Verification reasoning:** VALID: `torch.load()` is called without `map_location` on line 98. The model was saved after training (which used `args.device`), so loading on a CPU-only machine will fail if it was trained on GPU. The fix is trivial: `torch.load(f"{out_dir}/best_model.pt", map_location=args.device)`.
+
+---
+
+## 9. rep-002 (high)
+
+**File:** 
+**Repo:** [amitaysicherman__reactembed](https://github.com/amitaysicherman/reactembed)
+**Location:** function `main` (line 77)
+**Paper:** ReactEmbed: A Cross-Domain Framework for Protein-Molecule Representation Learning via Biochemical Reaction Networks
+**Authors:** Amitay Sicherman, Kira Radinsky
+
+**Issue:** rep-002: Issue detected
+
+**Explanation:** CUDA non-determinism: some GPU ops are non-deterministic by default. Set torch.use_deterministic_algorithms(True) and torch.backends.cudnn.benchmark = False.
+
+
+
+**Code:**
+```python
+def main(data_name, batch_size, p_model, m_model, shared_dim, n_layers, hidden_dim, dropout,
+         epochs, lr, flip_prob=0, samples_ratio=1, no_pp_mm=0, datasets=None, override=False):
+    name = model_args_to_name(p_model, m_model, n_layers, hidden_dim, dropout, epochs, lr, batch_size, flip_prob,
+                              shared_dim, samples_ratio, no_pp_mm)
+    save_dir = f"data/{data_name}/model/{name}/"
+    model_file = f"{save_dir}/model.pt"
+    if not override and os.path.exists(model_file):
+        print("Model already exists")
+        return
+
+    os.makedirs(save_dir, exist_ok=True)
+    if datasets is not None:
+        train_loader, valid_loader, test_loader = datasets
+    else:
+        train_loader = get_loader(data_name, "train", batch_size, p_model, m_model, flip_prob, samples_ratio, no_pp_mm)
+        valid_loader = get_loader(data_name, "valid", batch_size, p_model, m_model, flip_prob, samples_ratio, no_pp_mm)
+        test_loader = get_loader(data_name, "test", batch_size, p_model, m_model, flip_prob, samples_ratio, no_pp_mm)
+
+    p_dim = model_to_dim[p_model]
+    m_dim = model_to_dim[m_model]
+
+    model = build_models(p_dim, m_dim, shared_dim, n_layers, hidden_dim, dropout, save_dir)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
+    print(model)
+    print(sum(p.numel() for p in model.parameters() if p.requires_grad), "parameters")
+
+    contrastive_loss = nn.TripletMarginWithDistanceLoss(
+        distance_function=lambda x1, x2: 1 - F.cosine_similarity(x1, x2))
+
+    best_valid_loss = float("inf")
+    for epoch in range(epochs):
+        visualize_training(model, train_loader.dataset, device, epoch, save_dir)
+
+        train_loss = run_epoch(model, optimizer, train_loader, contrastive_loss, is_train=True)
+        with torch.no_grad():
+            valid_loss = run_epoch(model, optimizer, valid_loader, contrastive_loss, is_train=False)
+            test_loss = run_epoch(model, optimizer, test_loader, contrastive_loss, is_train=False)
+        print(f"Epoch {epoch} Train Loss: {train_loss}, Valid Loss: {valid_loss}, Test Loss: {test_loss}")
+
+        if valid_loss < best_valid_loss:
+            best_valid_loss = valid_loss
+            torch.save(model.state_dict(), f"{save_dir}/model.pt")
+            print("Model saved")
+
+        with open(f"{save_dir}/losses.txt", "a") as f:
+            f.write(f"Epoch {epoch}: Train Loss: {train_loss}, Valid Loss: {valid_loss}, Test Loss: {test_loss}\n")
+
+    with open(f"{save_dir}/losses.txt", "a") as f:
+        f.write(f"Best Valid Loss: {best_valid_loss}")
+```
+
+**Verification reasoning:** VALID: The `main` function trains a neural network with GPU operations but never sets `torch.use_deterministic_algorithms(True)` or `torch.backends.cudnn.benchmark = False`. The code uses operations like `TripletMarginWithDistanceLoss` with cosine similarity that can be non-deterministic on GPU, and there's no seed setting anywhere visible. This is a biology domain model where reproducibility matters for scientific validity.
+
+---
+
+## 10. rep-002 (high)
+
+**File:** 
+**Repo:** [zhixunlee__fairgb](https://github.com/zhixunlee/fairgb)
+**Location:** function `run` (line 40)
+**Paper:** Rethinking Fair Graph Neural Networks from Re-balancing
+**Authors:** ZHIXUN LI et al.
+
+**Issue:** rep-002: Issue detected
+
+**Explanation:** CUDA non-determinism: some GPU ops are non-deterministic by default. Set torch.use_deterministic_algorithms(True) and torch.backends.cudnn.benchmark = False.
+
+
+
+**Code:**
+```python
+def run(data, args):
+    acc, f1, auc_roc, parity, equality = np.zeros(args.runs), np.zeros(
+        args.runs), np.zeros(args.runs), np.zeros(args.runs), np.zeros(args.runs)
+    
+    neighbor_dist_list = get_ins_neighbor_dist(data.y.size(0), data.edge_index, args.device)
+
+    data = data.to(args.device)
+    n_cls = data.y.max().int().item() + 1
+    n_sen = data.sens.max().int().item() + 1
+    index_list = torch.arange(len(data.y)).to(args.device)
+    group_num_list, idx_info = [], []
+    for i in range(n_cls):
+        for j in range(n_sen):
+            mask = ((data.y == i) & (data.sens == j) & data.train_mask)
+            data_num = mask.sum()
+            group_num_list.append(int(data_num.item()))
+            idx_info.append(index_list[mask])
+
+    encoder, classifier, optimizer_e, optimizer_c = get_enc_cls_opt(args)
+
+    for count in range(args.runs):
+        seed_everything(count + args.seed)
+        classifier.reset_parameters()
+        encoder.reset_parameters()
+
+        best_val_tradeoff = 0
+        for epoch in range(0, args.epochs):
+            encoder.train()
+            classifier.train()
+
+            optimizer_c.zero_grad()
+            optimizer_e.zero_grad()
+            
+            sampling_src_idx, sampling_dst_idx = sampling_idx_individual_dst(group_num_list, idx_info, args.eta)
+            beta = torch.distributions.beta.Beta(2, 2)
+            lam = beta.sample((len(sampling_src_idx),) ).unsqueeze(1)
+            lam = lam.to(args.device)
+        
+            if epoch >= args.warmup:
+                new_edge_index = neighbor_sampling(data.x.size(0), data.edge_index, sampling_src_idx, neighbor_dist_list)
+                new_x = saliency_mixup(data.x, sampling_src_idx, sampling_dst_idx, lam)
+                
+                h = encoder(new_x, new_edge_index)
+                output = classifier(h)
+
+                add_num = output.shape[0] - data.train_mask.shape[0]
+                new_train_mask = torch.ones(add_num, dtype=torch.bool, device=args.device)
+                new_train_mask = torch.cat((torch.zeros(data.train_mask.shape[0], dtype=torch.bool, device=args.device), new_train_mask), dim=0)
+
+                loss_src = F.binary_cross_entropy_with_logits(
+                    output[new_train_mask], data.y[sampling_src_idx].unsqueeze(1).to(args.device), reduction='none')
+                loss_dst = F.binary_cross_entropy_with_logits(
+                    output[new_train_mask], data.y[sampling_dst_idx].unsqueeze(1).to(args.device), reduction='none')
+                
+                pos_grad_src = (1. - torch.exp(-loss_src).detach()) * lam
+                pos_grad_dst = (1. - torch.exp(-loss_dst).detach()) * (1-lam)
+                grad_count = []
+                for i in range(n_cls):
+                    for j in range(n_sen):
+                        mask_src = (data.y[sampling_src_idx] == i) & (data.sens[sampling_src_idx] == j)
+                        mask_dst = (data.y[sampling_dst_idx] == i) & (data.sens[sampling_dst_idx] == j)
+                        grad_count.append(pos_grad_src[mask_src].sum().item() + pos_grad_dst[mask_dst].sum().item())
+
+                min_grad = np.min(grad_count)
+                group_weight_list = [float(min_grad)/(float(num) + EPS) for num in grad_count]
+
+                for i in range(n_cls):
+                    for j in range(n_sen):
+                        mask_src = (data.y[sampling_src_idx] == i) & (data.sens[sampling_dst_idx] == j)
+                        mask_dst = (data.y[sampling_dst_idx] == i) & (data.sens[sampling_dst_idx] == j)
+                        loss_src[mask_src] *= group_weight_list[i*2+j]
+                        loss_dst[mask_dst] *= group_weight_list[i*2+j]
+
+                loss = lam * loss_src + (1-lam) * loss_dst
+                loss.mean().backward()
+            else:
+                h = encoder(data.x, data.edge_index)
+                output = classifier(h)
+
+                loss_c = F.binary_cross_entropy_with_logits(
+                    output[data.train_mask], data.y[data.train_mask].unsqueeze(1).to(args.device))
+                loss_c.backward()
+
+            optimizer_e.step()
+            optimizer_c.step()
+
+            accs, auc_rocs, F1s, tmp_parity, tmp_equality = evaluate_ged3(classifier, encoder, data)
+
+            if epoch % 10 == 0:
+                print("RUN: {}/{}, Epoch: {:04}/{:04} | Val Acc: {:.4f}, Test Acc: {:.4f}, Test AUC: {:.4f}, Test F1: {:.4f}, Test SP: {:.4f}, Test EO: {:.4f}".format(
+                    count+1, args.runs, epoch, args.epochs, accs['val'], accs['test'], auc_rocs['test'], F1s['test'], tmp_parity['test'], tmp_equality['test']
+                ))
+
+            if (auc_rocs['val'] + F1s['val'] + accs['val'] - args.alpha * (tmp_parity['val'] + tmp_equality['val']) > best_val_tradeoff):
+                test_acc = accs['test']
+                test_auc_roc = auc_rocs['test']
+                test_f1 = F1s['test']
+                test_parity, test_equality = tmp_parity['test'], tmp_equality['test']
+
+                best_val_tradeoff = auc_rocs['val'] + F1s['val'] + \
+                    accs['val'] - args.alpha * (tmp_parity['val'] + tmp_equality['val'])
+                                
+                print("\033[0;30;41m RUN: {}/{}, Epoch: {:04}/{:04} | Val Acc: {:.4f}, Test Acc: {:.4f}, Test AUC: {:.4f}, Test F1: {:.4f}, Test SP: {:.4f}, Test EO: {:.4f}\033[0m".format(
+                    count+1, args.runs, epoch, args.epochs, accs['val'], accs['test'], auc_rocs['test'], F1s['test'], tmp_parity['test'], tmp_equality['test']
+                ))
+
+        acc[count] = test_acc
+        f1[count] = test_f1
+        auc_roc[count] = test_auc_roc
+        parity[count] = test_parity
+        equality[count] = test_equality
+
+    return acc, f1, auc_roc, parity, equality
+```
+
+**Verification reasoning:** VALID: The code uses `seed_everything(count + args.seed)` for seeding but never sets `torch.use_deterministic_algorithms(True)` or `torch.backends.cudnn.benchmark = False`. Graph neural network operations (especially neighborhood sampling and aggregation) are known to have non-deterministic CUDA implementations. This is a fairness research codebase where reproducibility is critical — non-deterministic GPU ops could produce different fairness metrics across runs even with the same seed.
 
 ---

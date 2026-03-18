@@ -72,7 +72,7 @@ description = "Processing all data without sampling"
 
 [[tests.negative]]
 file = "test_negative/seeded_sample.py"
-description = "Pandas sample with random_state for reproducibility"
+description = "Pandas df.sample() with random_state parameter for reproducible sampling"
 
 [[tests.positive]]
 file = "test_positive/sample_no_seed.py"
@@ -88,12 +88,12 @@ lines = [5, 13, 19]
 
 [[tests.positive]]
 file = "test_positive/augmentation_sample.py"
-description = "Data augmentation class using sample without random_state"
-expected_issue = "df.sample() in oversample and bootstrap methods without random_state"
+description = "Series-level sampling in standalone functions without random_state"
+expected_issue = "Series.sample() and predictions.sample() without random_state"
 min_confidence = 0.85
 
 [tests.positive.expected_location]
-type = "method"
-name = "oversample_minority"
-snippet = ".sample(n=target_count"
-lines = [15]
+type = "function"
+name = "select_representative_features"
+snippet = "feature_cols.sample(n=n_features)"
+lines = [9, 15, 27]

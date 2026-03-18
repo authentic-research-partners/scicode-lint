@@ -27,7 +27,7 @@ references = [
 question = """
 Does this code have ORDER-DEPENDENT file iteration without sorting?
 
-os.listdir(), glob.glob(), Path.glob() return files in non-deterministic order.
+os.listdir(), glob.glob(), Path.glob(), Path.iterdir() return files in non-deterministic order.
 This is ONLY a bug when iteration order affects results.
 
 BUG (answer YES) - order affects results:

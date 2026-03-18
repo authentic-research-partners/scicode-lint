@@ -28,10 +28,13 @@ Usage:
 """
 
 __all__ = [
+    "analysis_reporting",
     "config",
     "database",
     "generate_report",
     "models",
+    "report_critical",
+    "report_queries",
     "run_analysis",
     "sources",
     "utils",

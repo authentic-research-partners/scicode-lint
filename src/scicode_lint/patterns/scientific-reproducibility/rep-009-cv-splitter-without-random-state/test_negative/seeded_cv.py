@@ -1,38 +1,28 @@
-"""Cross-validation using sklearn's cross_val_score with consistent seeding."""
-
 import numpy as np
-from sklearn.model_selection import LeaveOneOut, cross_val_score, cross_validate
+from sklearn.model_selection import (
+    KFold,
+    RepeatedStratifiedKFold,
+    ShuffleSplit,
+    StratifiedKFold,
+    cross_val_score,
+)
 
 
-def evaluate_model_cv(
-    estimator,
-    X: np.ndarray,
-    y: np.ndarray,
-    cv: int = 5,
-) -> dict:
-    """Evaluate using cross_validate with default LeaveOneOut (no randomness)."""
-    return cross_validate(
-        estimator,
-        X,
-        y,
-        cv=LeaveOneOut(),
-        return_train_score=True,
-    )
+def evaluate_with_seeded_kfold(estimator, X: np.ndarray, y: np.ndarray) -> np.ndarray:
+    kfold = KFold(n_splits=5, shuffle=True, random_state=42)
+    return cross_val_score(estimator, X, y, cv=kfold)
 
 
-def compare_models_cv(
-    models: dict,
-    X: np.ndarray,
-    y: np.ndarray,
-    cv: int = 5,
-) -> dict[str, np.ndarray]:
-    """Compare multiple models using cross_val_score with deterministic CV."""
-    return {name: cross_val_score(model, X, y, cv=cv) for name, model in models.items()}
+def evaluate_with_seeded_stratified(estimator, X: np.ndarray, y: np.ndarray) -> np.ndarray:
+    skf = StratifiedKFold(n_splits=10, shuffle=True, random_state=123)
+    return cross_val_score(estimator, X, y, cv=skf)
 
 
-def time_series_cv(X: np.ndarray, y: np.ndarray, n_splits: int = 5):
-    """Time series CV using TimeSeriesSplit (inherently deterministic)."""
-    from sklearn.model_selection import TimeSeriesSplit
+def evaluate_with_seeded_shuffle(estimator, X: np.ndarray, y: np.ndarray) -> np.ndarray:
+    ss = ShuffleSplit(n_splits=5, test_size=0.2, random_state=0)
+    return cross_val_score(estimator, X, y, cv=ss)
 
-    tscv = TimeSeriesSplit(n_splits=n_splits)
-    return list(tscv.split(X))
+
+def evaluate_repeated(estimator, X: np.ndarray, y: np.ndarray) -> np.ndarray:
+    rskf = RepeatedStratifiedKFold(n_splits=5, n_repeats=3, random_state=42)
+    return cross_val_score(estimator, X, y, cv=rskf)

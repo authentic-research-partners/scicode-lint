@@ -1,6 +1,13 @@
 #!/bin/bash
 # Start vLLM server locally
-# Run with: bash src/scicode_lint/vllm/start_vllm.sh [OPTIONS] [MODEL] [PORT] [MAX_LEN] [GPU_MEM] [MAX_NUM_SEQS]
+#
+# Preferred usage (after pip install):
+#   scicode-lint vllm-server start
+#   scicode-lint vllm-server start --restart
+#   scicode-lint vllm-server start --model "Qwen/Qwen3-8B-FP8" --port 5001
+#
+# Direct usage:
+#   bash src/scicode_lint/vllm/start_vllm.sh [OPTIONS] [MODEL] [PORT] [MAX_LEN] [GPU_MEM] [MAX_NUM_SEQS]
 #
 # Options:
 #   --restart, --force    Kill any running vLLM server before starting

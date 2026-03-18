@@ -22,8 +22,3 @@ def export_model(model, output_path):
         output_names=["output"],
         opset_version=11,
     )
-
-
-def export_transformer(model, output_path):
-    dummy_input = torch.randint(0, 1000, (1, 128))
-    torch.onnx.export(model, dummy_input, output_path)

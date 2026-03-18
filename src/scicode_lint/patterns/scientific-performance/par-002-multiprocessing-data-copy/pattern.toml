@@ -1,4 +1,4 @@
-# Pattern: par-002-pattern
+# Pattern: par-002-multiprocessing-data-copy
 # Auto-migrated from YAML catalog on 2026-03-03
 
 [meta]
@@ -17,7 +17,6 @@ Passing large arrays to multiprocessing causes expensive data copying. Each proc
 
 explanation = """
 Data duplication: multiprocessing copies data to each process. 4 processes on a 4 GB array = 16 GB. Use multiprocessing.shared_memory or pass indices instead of data.
-
 """
 
 tags = []
@@ -33,26 +32,39 @@ Analyze multiprocessing data transfer patterns.
 
 Passing large arrays to multiprocessing causes expensive data copying. Each process receives a full copy: 4 processes on a 4GB array = 16GB memory usage.
 
-Correct approach: Use multiprocessing.shared_memory, pass indices instead of data, or use file-based sharing.
+CRITICAL: Only flag RAW Python multiprocessing (Pool, Process, ProcessPoolExecutor) used directly. Library APIs with built-in multiprocessing handle this internally.
 
-Does this code copy large arrays to each worker process?
+Does this code copy the SAME large array to EACH worker process using raw multiprocessing?
+
+BOTH conditions must be true for YES:
+1. Large array passed to workers (not small slices, indices, or metadata)
+2. Each worker receives the SAME full data (not a unique small slice per worker)
 
 Look for:
 - pool.map(func, [large_array] * N) duplicating array N times
 - ProcessPoolExecutor submitting same large array to multiple workers
-- Large arrays passed as function arguments to worker processes
+- functools.partial closing over a large array, submitted to multiple workers
+- executor.submit(obj.method, ...) where obj holds a large array as an attribute
 
-YES = Bug found: large arrays copied to each worker process
-NO = Correct: uses shared memory, passes indices, or small data only
+NOT a bug (answer NO):
+- Library APIs with built-in multiprocessing: datasets.map(num_proc=N), joblib.Parallel, Dask, Ray — these manage memory internally
+- Each worker receives a DIFFERENT small slice of data (pre-sliced dispatch, 1/N of data per worker)
+- Small data only (< ~100MB per worker)
+- Uses multiprocessing.shared_memory, numpy memmap, or file-based sharing
+
+YES = Bug found: same large array copied to each worker via raw Pool/Process/ProcessPoolExecutor
+NO = Correct: library API, pre-sliced data, shared memory, indices, or small data
 """
 
 warning_message = """
 Data duplication: multiprocessing copies data to each process. 4 processes on a 4 GB array = 16 GB. Use multiprocessing.shared_memory or pass indices instead of data.
-
 """
 
 min_confidence = 0.85
-false_positive_risks = []
+false_positive_risks = [
+    "Library APIs with built-in multiprocessing (joblib.Parallel, datasets.map, Dask, Ray) manage memory internally",
+    "Pre-sliced dispatch where each worker gets a unique small slice of data",
+]
 
 [tests]
 
@@ -78,7 +90,7 @@ min_confidence = 0.85
 type = "function"
 name = "parallel_slice_analysis"
 snippet = "worker_func = partial(compute_slice_stats, full_data=data)"
-lines = [16, 18]
+lines = [16, 19]
 
 [[tests.negative]]
 file = "test_negative/shared_memory_approach.py"
@@ -104,3 +116,11 @@ lines = [20]
 [[tests.negative]]
 file = "test_negative/shared_array_proper.py"
 description = "Uses numpy memmap for file-based data sharing - workers access shared file without data copying"
+
+[[tests.negative]]
+file = "test_negative/presliced_dispatch.py"
+description = "Pre-sliced data dispatch - each worker receives a unique small slice via np.array_split, no data duplication"
+
+[[tests.negative]]
+file = "test_negative/joblib_parallel.py"
+description = "Uses joblib.Parallel which manages memory internally - not raw multiprocessing"

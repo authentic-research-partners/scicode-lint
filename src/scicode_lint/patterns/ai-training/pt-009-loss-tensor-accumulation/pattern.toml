@@ -1,5 +1,4 @@
 # Pattern: pt-009-loss-tensor-accumulation
-# Fixed: Pattern was misnamed. Actual detection is about accumulating loss tensors causing memory leaks.
 
 [meta]
 id = "pt-009"
@@ -73,7 +72,7 @@ min_confidence = 0.85
 type = "function"
 name = "train_with_amp_logging"
 snippet = "batch_losses.append(loss)"
-lines = [42, 60]
+lines = [42]
 
 [[tests.negative]]
 file = "test_negative/accumulate_scalar.py"
@@ -91,7 +90,7 @@ allow_skip = true
 context_notes = """
 This is acceptable when intentionally accumulating gradients across multiple batches to simulate larger batch sizes.
 The accumulated loss should still be divided by accumulation_steps and backward() called on the scaled loss.
-However, accumulating the loss tensor itself (not just gradients) still causes memory issues - should accumulate loss.item() for logging.
+After backward() the graph is freed, so accumulating the loss tensor for logging is less critical but still wasteful — prefer loss.item() for logging.
 """
 
 [tests.context_dependent.expected_location]
@@ -111,7 +110,7 @@ min_confidence = 0.85
 type = "function"
 name = "train_epoch"
 snippet = "total_loss += loss"
-lines = [13, 26]
+lines = [13]
 
 [[tests.negative]]
 file = "test_negative/epoch_loss_track_correct.py"

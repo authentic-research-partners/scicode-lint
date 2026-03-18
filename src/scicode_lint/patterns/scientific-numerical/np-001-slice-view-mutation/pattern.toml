@@ -94,8 +94,8 @@ snippet = "normalized -= mean"
 lines = [8]
 
 [[tests.negative]]
-file = "test_negative/proper_copy.py"
-description = "Slices explicitly use .copy() before modification, preventing mutation of original array"
+file = "test_negative/fancy_indexing_copy.py"
+description = "Fancy indexing (boolean masks, integer arrays) and np.where implicitly create copies, so modifications never affect the original array"
 
 [[tests.negative]]
 file = "test_negative/readonly_slice.py"
@@ -103,4 +103,4 @@ description = "Slices used only for read operations (mean, std, argmax, sum) wit
 
 [[tests.negative]]
 file = "test_negative/batch_normalize_copy.py"
-description = "Slices explicitly use .copy() before modification, ensuring arithmetic operations (-= and *=) do not affect the original data"
+description = "Avoids mutation through pre-allocated output arrays and expression arithmetic rather than in-place operations on slice views"

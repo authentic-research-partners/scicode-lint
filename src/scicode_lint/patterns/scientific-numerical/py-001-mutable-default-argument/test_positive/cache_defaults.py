@@ -1,28 +1,41 @@
 import numpy as np
 
 
-def make_layer(input_dim, output_dim, weight_cache={}):
-    key = (input_dim, output_dim)
-    if key not in weight_cache:
-        weight_cache[key] = np.random.randn(input_dim, output_dim) * 0.01
-    return weight_cache[key]
+class DataProcessor:
+    def __init__(self, transforms=[]):
+        self.transforms = transforms
+
+    def register(self, fn):
+        self.transforms.append(fn)
+
+    def run(self, data):
+        for t in self.transforms:
+            data = t(data)
+        return data
 
 
-def log_metric(epoch, loss, log_entries=[]):
-    log_entries.append({"epoch": epoch, "loss": loss})
-    if len(log_entries) % 10 == 0:
-        avg = np.mean([e["loss"] for e in log_entries[-10:]])
-        return avg
-    return loss
+class MetricTracker:
+    def __init__(self, window_values=[]):
+        self.window = window_values
+
+    def update(self, value):
+        self.window.append(value)
+        if len(self.window) > 50:
+            self.window.pop(0)
+        return np.mean(self.window)
 
 
-class FeatureSelector:
-    def __init__(self, selected_features=set()):
-        self.features = selected_features
+class ExperimentRegistry:
+    def __init__(self, completed_ids=set()):
+        self.completed = completed_ids
 
-    def add(self, name, importance):
-        if importance > 0.5:
-            self.features.add(name)
+    def mark_done(self, exp_id):
+        self.completed.add(exp_id)
 
-    def get_mask(self, all_features):
-        return [f in self.features for f in all_features]
+    def is_done(self, exp_id):
+        return exp_id in self.completed
+
+
+proc1 = DataProcessor()
+proc1.register(lambda x: x * 2)
+proc2 = DataProcessor()

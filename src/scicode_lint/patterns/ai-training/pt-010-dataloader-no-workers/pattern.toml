@@ -28,19 +28,24 @@ references = ["https://pytorch.org/docs/stable/data.html#multi-process-data-load
 question = """
 Does this code have DataLoader with single-process loading in GPU training?
 
-Single-process loading = num_workers=0 OR num_workers not specified (defaults to 0)
+PREREQUISITE: An explicit DataLoader(...) constructor call must be visible in this code. If DataLoader is hidden in a framework (Lightning trainer.fit(), etc.) or separate function, answer NO immediately.
 
 Check for BOTH:
-1. DataLoader(...) with num_workers=0 OR num_workers parameter missing entirely
+1. DataLoader(...) constructor visible with num_workers=0 as a LITERAL integer, OR num_workers parameter missing entirely
 2. GPU training indicators: .cuda() or .to(device) in training loop, plus loss.backward()
 
+STOP — answer NO immediately if data is PRE-LOADED to GPU:
+If tensors are moved to GPU (.to(device), .cuda()) BEFORE being put in a TensorDataset/DataLoader, then num_workers=0 is CORRECT and REQUIRED — multi-process loading cannot access GPU memory from forked workers. This is NOT a bug even if loss.backward() is present.
+
 NOT a bug (answer NO) in these cases:
-- Tensors moved to GPU BEFORE TensorDataset creation (data = data.to(device) happens BEFORE TensorDataset(data, ...))
-- num_workers >= 1 specified
+- Data pre-loaded to GPU before TensorDataset: X = data.to(device); dataset = TensorDataset(X, ...) — num_workers=0 is correct here
+- num_workers set to a VARIABLE (args.workers, config["num_workers"], kwargs["num_workers"]) — cannot determine runtime value, answer NO
+- num_workers >= 1 specified as literal integer
+- No explicit DataLoader constructor visible (training delegated to framework/function)
 - Inference-only code (model.eval(), torch.no_grad(), no loss.backward())
 
-YES = Bug: DataLoader with num_workers=0/missing AND GPU training code (data.to(device) in loop + loss.backward())
-NO = Clean: Tensors on GPU before TensorDataset, or num_workers >= 1, or inference-only
+YES = Bug: DataLoader constructor visible with num_workers=0 (literal) or missing AND GPU training code
+NO = Clean: num_workers is a variable, num_workers >= 1, no DataLoader visible, pre-loaded GPU tensors, or inference-only
 """
 
 warning_message = """

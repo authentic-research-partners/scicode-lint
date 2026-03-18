@@ -37,6 +37,7 @@ Does this code use future data in temporal features?
 Look for:
 - shift(-1), shift(-N) creating "tomorrow's value" features
 - center=True in rolling/expanding windows
+- Manual array slicing to access future rows (e.g., values[1:], array[i+1]) used as features for current rows
 - Any operation that pulls future values into current row
 
 YES = Bug found: feature uses future data (shift(-N) or center=True)
@@ -70,18 +71,9 @@ lines = [6]
 file = "test_negative/shift_positive_correct.py"
 description = "Correct use of shift with positive values"
 
-[[tests.context_dependent]]
-file = "test_context_dependent/rolling_with_min_periods.py"
-description = "Rolling window with min_periods"
-context_notes = "Edge case behavior with min_periods can be confusing but not necessarily leakage"
-allow_detection = true
-allow_skip = true
-
-[tests.context_dependent.expected_location]
-type = "function"
-name = "rolling_with_min_periods"
-snippet = "df[\"price_rolling\"] = df[\"price\"].rolling(window=7, min_periods=3).mean()"
-lines = [2]
+[[tests.negative]]
+file = "test_negative/rolling_with_min_periods.py"
+description = "Correct: rolling window without center=True uses only past data, min_periods controls NaN handling"
 
 
 [[tests.positive]]

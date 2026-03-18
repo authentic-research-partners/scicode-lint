@@ -29,14 +29,20 @@ Analyze the training loop order of operations.
 
 The correct PyTorch training sequence is: zero_grad() → forward → loss → backward() → step(). Calling optimizer.step() before backward() updates parameters with stale or zero gradients.
 
-Does this code call optimizer.step() before backward()?
+Step 1 — Prerequisite (if this fails, answer NO immediately):
+Both of the following must be explicitly visible in THIS code:
+- A call to optimizer.step()
+- A call to loss.backward() (or .backward() on any tensor)
+If either is absent, answer NO — the bug cannot exist here.
+Note: scheduler.step() is NOT the same as optimizer.step() — schedulers adjust learning rates and do not use gradients. Ignore scheduler.step() for this check.
 
-Look for:
-- optimizer.step() appearing before loss.backward() in training loop
-- Parameter updates happening before gradient computation
+IMPORTANT: If the training loop is hidden inside a called method (e.g., exp.run(), trainer.train(), builder.run_model()), you are looking at the wrong level. Answer NO — you cannot verify ordering from a call site.
 
-YES = Bug found: optimizer.step() called before backward()
-NO = Correct: backward() called before step()
+Step 2 — Ordering check (only if Step 1 passes):
+Does optimizer.step() appear BEFORE loss.backward() in the same training loop body?
+
+YES = Bug found: optimizer.step() called before backward(), both visible in same scope
+NO = Correct: backward() called before step(), OR the code is a wrapper/orchestration function that does not contain both operations directly
 """
 
 warning_message = """

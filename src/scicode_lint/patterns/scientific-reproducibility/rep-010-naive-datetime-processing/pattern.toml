@@ -27,27 +27,27 @@ references = [
 question = """
 Analyze datetime handling for REPRODUCIBILITY-CRITICAL timezone issues.
 
-CRITICAL DISTINCTION - This pattern ONLY applies to datetimes that affect SCIENTIFIC REPRODUCIBILITY:
-- Timestamps stored IN scientific data (experiment results, measurements, data files)
-- Timestamps used for data filtering or selection (time-based splits, date ranges)
-- Timestamps that must match across machines or runs for reproducibility
-
-NOT a reproducibility issue (answer NO immediately):
+STOP — answer NO immediately if ANY of these apply:
 - Directory/file naming for organizing outputs (e.g., results_2024_01_15/)
-- Logging or display timestamps (human-readable output)
+- Logging, display, or progress reporting timestamps
 - User-facing metadata that can be overridden via arguments
-- Progress reporting or console output
-- Non-scientific organizational metadata
+- datetime.utcnow() with explicit timezone conversion math (e.g., adding timedelta for offset) — this is deterministic
+- No datetime.now() or datetime.utcnow() in the code
 
-WHY THIS MATTERS: datetime.now() returns local timezone, datetime.utcnow() has no timezone info. Scientific data with naive timestamps varies between machines/timezones, breaking reproducibility.
+This pattern ONLY applies to datetimes that affect SCIENTIFIC REPRODUCIBILITY:
+- Timestamps stored IN scientific data records (experiment results, measurements)
+- Timestamps used for data filtering or selection (time-based splits, date ranges)
+- Timestamps that must match across machines or runs
 
-For REPRODUCIBILITY-CRITICAL timestamps only, look for:
-- datetime.now() without tz parameter stored in data
-- datetime.utcnow() (deprecated) in scientific records
-- datetime.fromtimestamp() without tz parameter in data processing
+ALL THREE conditions must be true for YES:
+1. Naive datetime created (datetime.now() without tz, or datetime.utcnow() stored directly)
+2. Value stored in scientific data records OR used for data filtering/selection
+3. NOT purely for file naming, logging, display, or progress reporting
 
-YES = Bug found: naive datetime in SCIENTIFIC DATA affecting reproducibility
-NO = Organizational/logging use, OR timezone-aware datetime used
+WHY THIS MATTERS: datetime.now() returns local timezone. Scientific data with naive timestamps varies between machines/timezones.
+
+YES = Bug found: naive datetime stored in SCIENTIFIC DATA records or used for data filtering
+NO = File naming/logging/display use, utcnow() with explicit timezone math, or timezone-aware datetime used
 """
 
 warning_message = """
@@ -62,14 +62,14 @@ false_positive_risks = []
 [[tests.positive]]
 file = "test_positive/naive_datetime.py"
 description = "Creating naive datetimes without timezone in scientific data"
-expected_issue = "datetime.now(), datetime.utcnow(), datetime.fromtimestamp() without timezone in data records"
+expected_issue = "datetime.now() and datetime.fromtimestamp() without timezone in scientific data records"
 min_confidence = 0.85
 
 [tests.positive.expected_location]
 type = "module"
 name = ""
 snippet = "datetime.now()"
-lines = [6, 11, 17, 18, 27]
+lines = [6, 13, 14, 22]
 
 [[tests.negative]]
 file = "test_negative/unix_timestamp.py"
@@ -102,13 +102,13 @@ lines = [10, 21]
 
 [[tests.positive]]
 file = "test_positive/experiment_timestamps.py"
-description = "Experiment tracking class using naive datetimes"
-expected_issue = "datetime.now() and datetime.utcnow() in tracker class"
+description = "Experiment tracker storing naive datetime.now() in measurement records and using it for data filtering"
+expected_issue = "datetime.now() stored in scientific measurement records and used for data filtering"
 min_confidence = 0.85
 
 [tests.positive.expected_location]
-type = "module"
-name = ""
+type = "method"
+name = "record_measurement"
 snippet = "datetime.now()"
-lines = [11, 18, 25, 30]
+lines = [8, 16]
 

@@ -1,16 +1,24 @@
+import random
+
 import numpy as np
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import train_test_split
 
 
-def run_experiment(X, y):
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2)
-    model = RandomForestClassifier(n_estimators=100)
-    model.fit(X_train, y_train)
-    return model.score(X_test, y_test)
+def main():
+    data = np.random.randn(1000, 10)
+    labels = np.random.randint(0, 3, size=1000)
+
+    noisy = data + np.random.normal(0, 0.1, data.shape)
+
+    indices = list(range(1000))
+    random.shuffle(indices)
+    train_idx = indices[:800]
+    test_idx = indices[800:]
+
+    train_data = noisy[train_idx]
+    test_data = noisy[test_idx]
+    return train_data, test_data, labels[train_idx], labels[test_idx]
 
 
-def generate_synthetic_data(n_samples=1000):
-    X = np.random.randn(n_samples, 10)
-    y = (X[:, 0] + X[:, 1] > 0).astype(int)
-    return X, y
+if __name__ == "__main__":
+    train_x, test_x, train_y, test_y = main()
+    print(f"Train: {train_x.shape}, Test: {test_x.shape}")

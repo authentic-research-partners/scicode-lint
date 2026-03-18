@@ -64,7 +64,7 @@ min_confidence = 0.85
 type = "class"
 name = "FeatureBuilder"
 snippet = "df.groupby(col)[self.target_col].mean()"
-lines = [24, 32]
+lines = [24]
 
 [[tests.negative]]
 file = "test_negative/target_encoding_after_split.py"
@@ -94,7 +94,7 @@ min_confidence = 0.85
 type = "function"
 name = "encode_categories"
 snippet = "means = df.groupby(col)[target_col].mean()"
-lines = [6, 13]
+lines = [6]
 
 [[tests.positive]]
 file = "test_positive/category_target_encode.py"

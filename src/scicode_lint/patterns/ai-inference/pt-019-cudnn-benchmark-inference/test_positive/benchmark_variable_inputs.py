@@ -35,15 +35,9 @@ def inference_server(model, request_queue):
             yield embeddings.cpu()
 
 
-def process_images(model, images_list):
-    model.eval()
-    model.cuda()
-
-    torch.backends.cudnn.benchmark = True
-
-    results = []
-    with torch.no_grad():
-        for images in images_list:
-            output = model(images.cuda())
-            results.append(output.cpu())
-    return results
+def preprocess_images(images_list):
+    processed = []
+    for images in images_list:
+        normalized = (images.float() - 127.5) / 127.5
+        processed.append(normalized)
+    return processed

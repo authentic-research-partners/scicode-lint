@@ -29,28 +29,51 @@ Analyze the PyTorch training loop structure.
 
 WHY THIS MATTERS: PyTorch accumulates gradients by default. Without clearing gradients before each backward(), gradients from previous batches add up, causing incorrect updates, exploding gradients, and NaN losses.
 
+PREREQUISITE: backward() must appear in this code snippet. If backward() is not visible, answer NO immediately.
+
 Does this code have missing or misplaced zero_grad()?
 
-Look for:
-- Training loop with backward() but no zero_grad() call
-- zero_grad() called once before the batch loop instead of inside each batch iteration
-- Manual gradient clearing done outside the per-batch iteration
+ALL THREE primitives must be visible in this code to flag:
+- backward() call
+- optimizer.step() or equivalent
+- Missing or misplaced zero_grad()
 
-CORRECT pattern (zero_grad inside batch loop):
+CORRECT patterns (zero_grad inside batch loop):
   for batch in loader:      # batch loop
-      optimizer.zero_grad() # inside batch loop - CORRECT
+      optimizer.zero_grad() # start of batch loop - CORRECT
       ...
       loss.backward()
+
+ALSO CORRECT (zero_grad at end of loop, before next iteration):
+  for batch in loader:
+      ...
+      loss.backward()
+      optimizer.step()
+      optimizer.zero_grad()  # end of loop - still CORRECT, clears before next backward()
+
+ALSO CORRECT (gradient accumulation — zero once before first microbatch):
+  for i, microbatch in enumerate(microbatches):
+      if i == 0:
+          optimizer.zero_grad()  # or mp_trainer.zero_grad() — CORRECT for accumulation
+      loss.backward()
+  optimizer.step()
 
 BUG pattern (zero_grad outside batch loop):
   optimizer.zero_grad()     # outside - BUG
   for batch in loader:
       loss.backward()
 
-Check indentation carefully: zero_grad() must be INSIDE the loop that iterates over batches.
+NOT a bug (answer NO):
+- No backward() visible in this code — cannot determine gradient management
+- Training is delegated to an abstraction (answer NO): any call that encapsulates backward() inside it: train_one_epoch(), trainer.step(), model.fit(), model.evaluate(task="train"), exp.run(), stepper.run(), engine.run(). If you cannot see a direct loss.backward() call, the gradient management is inside the abstraction — do not flag
+- No optimizer.step() visible — may not be a training loop
+- Only entry-point/configuration code that delegates training to another function
+- zero_grad() is called after optimizer.step() (or scaler.update()) at the end of the same loop iteration — gradients are cleared before the next batch begins
+- zero_grad() called only on i == 0 or equivalent condition within a microbatch loop — this is intentional gradient accumulation, not a bug
+- zero_grad() may be called on wrapper objects: mp_trainer.zero_grad(), scaler.zero_grad(), accelerator.zero_grad(), self.zero_grad() — these are all valid zero_grad calls
 
-YES = Bug found: zero_grad() is missing or called outside the per-batch loop
-NO = Correct: zero_grad() is called inside the batch loop before backward()
+YES = Bug found: backward() AND optimizer visible, but zero_grad() completely absent or outside per-batch loop
+NO = Correct: zero_grad() inside batch loop (start or end), gradient accumulation pattern, backward() not visible, or training delegated to helper function
 """
 
 warning_message = """
@@ -58,7 +81,10 @@ Missing optimizer.zero_grad(): Gradients accumulate across batches instead of be
 """
 
 min_confidence = 0.85
-false_positive_risks = []
+false_positive_risks = [
+    "Code that calls training helper functions but does not implement the loop body",
+    "Entry-point or configuration code with no backward() visible",
+]
 
 [tests]
 

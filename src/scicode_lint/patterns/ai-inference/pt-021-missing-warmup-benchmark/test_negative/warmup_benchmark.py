@@ -1,42 +1,58 @@
-import time
+import statistics
 
 import torch
 
 
-def benchmark_with_warmup(model, inputs, warmup_iters=10, measure_iters=100):
-    model.eval()
-    model.cuda()
-    inputs = inputs.cuda()
+class LatencyTracker:
+    def __init__(self, device_id=0):
+        self.device = torch.device(f"cuda:{device_id}")
+        self.start_event = torch.cuda.Event(enable_timing=True)
+        self.end_event = torch.cuda.Event(enable_timing=True)
 
-    with torch.no_grad():
-        for _ in range(warmup_iters):
-            _ = model(inputs)
+    def _run_passes(self, net, tensor, count):
+        for _ in range(count):
+            net(tensor)
 
-    torch.cuda.synchronize()
+    def collect_samples(self, net, tensor, n_warmup=20, n_samples=200):
+        net.to(self.device)
+        net.eval()
+        tensor = tensor.to(self.device)
 
-    start = time.perf_counter()
-    with torch.no_grad():
-        for _ in range(measure_iters):
-            _ = model(inputs)
-    torch.cuda.synchronize()
-    end = time.perf_counter()
+        with torch.no_grad():
+            self._run_passes(net, tensor, n_warmup)
 
-    return (end - start) / measure_iters
+        torch.cuda.synchronize(self.device)
+        measurements = []
+
+        with torch.no_grad():
+            for _ in range(n_samples):
+                self.start_event.record()
+                net(tensor)
+                self.end_event.record()
+                torch.cuda.synchronize(self.device)
+                measurements.append(self.start_event.elapsed_time(self.end_event))
+
+        return measurements
 
 
-def profile_with_discard(model, data_loader, discard_first=5):
-    model.eval()
-    timings = []
+def report_percentiles(net, resolution=(1, 3, 512, 512), reps=300):
+    tracker = LatencyTracker()
+    sample_input = torch.randn(*resolution, device="cuda")
 
-    with torch.no_grad():
-        for i, batch in enumerate(data_loader):
-            torch.cuda.synchronize()
-            start = time.perf_counter()
-            _ = model(batch.cuda())
-            torch.cuda.synchronize()
-            elapsed = time.perf_counter() - start
+    ms_values = tracker.collect_samples(net, sample_input, n_warmup=50, n_samples=reps)
 
-            if i >= discard_first:
-                timings.append(elapsed)
+    sorted_ms = sorted(ms_values)
+    p50 = sorted_ms[len(sorted_ms) // 2]
+    p95 = sorted_ms[int(len(sorted_ms) * 0.95)]
+    p99 = sorted_ms[int(len(sorted_ms) * 0.99)]
+    mean = statistics.mean(ms_values)
+    std = statistics.stdev(ms_values)
 
-    return sum(timings) / len(timings) if timings else 0
+    return {
+        "mean_ms": mean,
+        "std_ms": std,
+        "p50_ms": p50,
+        "p95_ms": p95,
+        "p99_ms": p99,
+        "num_samples": len(ms_values),
+    }

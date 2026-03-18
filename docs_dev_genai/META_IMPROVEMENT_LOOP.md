@@ -115,7 +115,9 @@ These themes become **specific context checks** to add to detection questions.
 | 49 | 2026-03-13 | 884 | 2661 | 12.4% | Before self-contained filter |
 | 53 | 2026-03-14 | 120 | 574 | N/A | Self-contained filter added |
 | 55 | 2026-03-15 | 120 | 429 | 36.4% | Comment stripping + line number fix |
-| 56 | 2026-03-16 | 120 | 219 | 45.2% | Pattern improvements, fewer FPs |
+| 56 | 2026-03-16 | 120 | 219 | 45.2% | 1st error analysis → 19 pattern improvements |
+| 62 | 2026-03-17 | 120 | 197 | 51.8% | 2nd error analysis → pattern improvements |
+| 65 | 2026-03-17 | 120 | 137 | 62.0% | 3rd round: reproducibility + numerical + performance |
 
 **Run 55 precision jump (12% → 36%)** came from two changes together:
 1. **Comment stripping** - Remove comments before LLM analysis (fewer distractions)

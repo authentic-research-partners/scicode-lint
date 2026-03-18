@@ -33,23 +33,28 @@ Analyze NUMPY ARRAY processing for vectorization opportunities.
 
 Python loops over NumPy ndarray elements are 100-1000x slower than vectorized operations.
 
-IMPORTANT: Only flag loops over NUMPY ARRAYS, not strings or lists.
+IMPORTANT: Only flag loops that run O(N) or O(N^2) times where N = array length, and each iteration processes exactly ONE element.
+
+Key test: Does the loop run once PER ARRAY ELEMENT? YES → flag. NO → do NOT flag.
 
 Does this code use Python loops over NumPy ARRAY elements?
 
 Look for:
-- for i in range(len(arr)) with arr[i] access WHERE arr is np.ndarray
-- Nested loops computing pairwise operations on arrays
+- for i in range(len(arr)) with arr[i] access WHERE arr is np.ndarray and loop runs once per element
+- Nested loops computing pairwise operations on arrays (O(N^2))
 - Element-wise conditionals on arrays that could use np.where()
 
 NOT a bug (answer NO):
+- Loops over a small fixed number of components/groups (K=5-20), where each iteration applies vectorized ops to the full array — these run K times, not N times
+- Loops over dictionary keys, config entries, or column names
+- Loops where the loop variable is not an index into a NumPy array
 - Loops over Python strings (character iteration) - can't be vectorized
 - Loops over Python lists (unless building NumPy operations)
 - Loops over DataFrame rows (use .apply() or vectorized ops instead)
 - Loops that perform I/O, network calls, or other inherently sequential operations
 
-YES = Bug: Python loop over NumPy ndarray elements (could use vectorized ops)
-NO = Clean: Vectorized ops, or loop over string/list, or inherently sequential
+YES = Bug: Python loop running once per array ELEMENT (O(N) or O(N^2)) that could use vectorized ops
+NO = Clean: Vectorized ops, loop over fixed components/groups, string/list loop, or inherently sequential
 """
 
 warning_message = """
@@ -106,7 +111,7 @@ min_confidence = 0.85
 type = "module"
 name = "row_iteration"
 snippet = "for point in points:"
-lines = [6, 14, 16, 17]
+lines = [6, 14, 15, 16, 17]
 
 [[tests.negative]]
 file = "test_negative/vectorized_operations.py"

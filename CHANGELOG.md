@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.2] - 2026-03-17
+
+### Added
+- **`vllm-server` CLI subcommand** — `scicode-lint vllm-server start/stop/status`
+- **Consolidated performance report** across all eval layers (`consolidated_results/`)
+
+### Changed
+- **3 meta-improvement passes** across all 66 patterns — real-world precision improved from 20.2% to 62.0% on feedback set, 37.9% to 54.1% on holdout set
+- 8 large files (>1000 lines) split into focused modules
+
 ## [0.2.1] - 2026-03-16
 
 ### Added

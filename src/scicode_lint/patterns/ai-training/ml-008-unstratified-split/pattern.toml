@@ -28,12 +28,22 @@ references = ["https://scikit-learn.org/stable/modules/cross_validation.html#str
 question = """
 Analyze train/test splitting for classification tasks.
 
+WHY THIS MATTERS: Without stratification, train/test splits on imbalanced data can produce folds where minority classes are absent or severely underrepresented, causing unreliable metrics and biased model selection.
+
+ZERO CASE (answer NO immediately — no splitting is happening):
+- RandomSampler, WeightedRandomSampler, SequentialSampler — these control batch ordering within an already-split dataset, NOT the train/test partition
+- DataLoader(shuffle=True/False) — shuffles batches, does not create splits
+- If you see no call to train_test_split, KFold, array_split, or a custom split function, and no split indices are being computed — answer NO
+
 FIRST: Is this code CREATING splits or LOADING pre-defined splits?
 
 PRE-DEFINED SPLITS (answer NO immediately):
 - Loading splits from files: train.csv/test.csv, train_idx.npy, split_indices.json
 - Using dataset with built-in splits: dataset.get_split(), load_data(split='train')
 - Loading indices from external source: np.load('train_indices.npy')
+- Loading from separate train/val/test directories: ImageFolder('train/'), ImageFolder('test/'), ImageFolder('val/'), Dataset(root=..., split='train'), paths constructed from 'train'/'test'/'val' strings, reading files from train_dir, test_dir, val_dir folder variables
+- If the code references 'train', 'val', 'test' only as directory names or split labels passed to a data loader — not as output of a split function — answer NO
+- Calling a helper function that accepts a split_file/split_path parameter: get_splits(data, split_file), load_splits(split_file=...), common.get_splits(...). Any function whose name contains "split" AND takes an external file/path as input is LOADING a split, not CREATING one — answer NO
 - Stratification should be checked at split creation, not loading time
 
 SECOND: For code CREATING splits, determine if CLASSIFICATION or REGRESSION:
@@ -42,14 +52,18 @@ SECOND: For code CREATING splits, determine if CLASSIFICATION or REGRESSION:
 
 This pattern ONLY applies to classification. Regression tasks do NOT need stratification.
 
-THIRD: For classification tasks CREATING splits, check for stratification:
+THIRD — only reach this if code is ACTIVELY COMPUTING the split boundary:
+- The code calls train_test_split(), KFold(), ShuffleSplit(), array_split(), or a custom function that uses random indices to divide data
+- The split point is determined by code in THIS file, not loaded from outside
+
+For classification tasks CREATING splits, check for stratification:
 - train_test_split() with stratify=y → NO (correct)
 - StratifiedKFold, StratifiedShuffleSplit → NO (correct)
 - train_test_split() WITHOUT stratify on classification → YES (bug)
 - KFold on classification → YES (bug)
 
 YES = Bug found: CLASSIFICATION task CREATING splits without stratification
-NO = Loads pre-defined splits, OR regression task, OR stratification used
+NO = Loads pre-defined splits, OR regression task, OR stratification used, OR no splitting occurring
 """
 
 warning_message = """
@@ -101,21 +115,21 @@ min_confidence = 0.85
 
 [tests.positive.expected_location]
 type = "function"
-name = "split_data"
-snippet = "return train_test_split(X, y, test_size=0.2, random_state=42)"
-lines = [5]
+name = "split_and_classify"
+snippet = "X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)"
+lines = [7]
 
 [[tests.positive]]
 file = "test_positive/rare_class_split.py"
-description = "Unstratified splits on rare event classification tasks"
-expected_issue = "Unstratified splits on rare events risk test/train class imbalance affecting model evaluation"
+description = "KFold cross-validation without stratification on classification task"
+expected_issue = "KFold without stratification risks skewed class distributions in folds"
 min_confidence = 0.85
 
 [tests.positive.expected_location]
 type = "function"
-name = "train_rare_event_model"
-snippet = "X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)"
-lines = [6]
+name = "evaluate_rare_event_detector"
+snippet = "kf = KFold(n_splits=n_folds, shuffle=True, random_state=0)"
+lines = [8]
 
 [[tests.negative]]
 file = "test_negative/rare_class_stratified.py"
@@ -128,3 +142,7 @@ description = "Correct stratified splits using stratify parameter and Stratified
 [[tests.negative]]
 file = "test_negative/predefined_splits.py"
 description = "Loading pre-defined splits from files - stratification checked at creation time"
+
+[[tests.negative]]
+file = "test_negative/regression_split.py"
+description = "Regression task using train_test_split and KFold without stratify - stratification not needed for regression"

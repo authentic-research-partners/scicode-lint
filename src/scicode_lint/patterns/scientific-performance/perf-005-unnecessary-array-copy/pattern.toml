@@ -33,7 +33,7 @@ IN-PLACE MODIFICATION (copy IS needed):
 - data -= x (modifies array directly)
 - data += x, data *= x, data /= x
 - data.sort(), data.fill(x)
-- data[i] = x, data[:] = x
+- data[i] = x, data[:] = x (slice assignment is ALWAYS in-place, even data[:] = some_function(data))
 
 NOT in-place (creates new array, copy NOT needed):
 - data = data - x (reassignment creates new array)
@@ -53,7 +53,7 @@ Unnecessary .copy() wastes memory. Only copy when you need mutation independence
 """
 
 min_confidence = 0.85
-false_positive_risks = ["Copy may be needed for thread safety or to prevent later modifications"]
+false_positive_risks = ["Copy may be needed for thread safety or to prevent later modifications", "Copying slice before return is common defensive practice"]
 
 [tests]
 
@@ -67,7 +67,7 @@ min_confidence = 0.85
 type = "function"
 name = "analyze_data"
 snippet = "data = arr.copy()"
-lines = [5, 21]
+lines = [5]
 
 [[tests.positive]]
 file = "test_positive/copy_for_return.py"
@@ -87,7 +87,7 @@ description = "Signal processing with bandpass filter and outlier clipping - cop
 
 [[tests.negative]]
 file = "test_negative/copy_for_independence.py"
-description = "Copy needed to prevent caller's array from being modified"
+description = "Copy needed for in-place slice assignment and index modification"
 
 [[tests.context_dependent]]
 file = "test_context_dependent/copy_before_external_call.py"
@@ -105,7 +105,7 @@ lines = [2]
 
 [[tests.positive]]
 file = "test_positive/explicit_copy_perf.py"
-description = "Array copied then used only for read-only transformations (mean subtraction, normalization, element-wise operations without mutation)"
+description = "Array copied then used only for read-only transformations (mean subtraction, normalization)"
 expected_issue = "Array is copied but never modified, only used for read-only calculations and arithmetic operations"
 min_confidence = 0.85
 
@@ -113,7 +113,7 @@ min_confidence = 0.85
 type = "function"
 name = "normalize_data"
 snippet = "data = arr.copy()"
-lines = [4, 5]
+lines = [5]
 
 [[tests.negative]]
 file = "test_negative/inplace_operations.py"

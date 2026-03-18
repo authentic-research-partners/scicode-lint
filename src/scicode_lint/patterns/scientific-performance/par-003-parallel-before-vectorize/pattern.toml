@@ -17,7 +17,6 @@ Adding parallelism before vectorizing operations is inefficient. Code is often s
 
 explanation = """
 Parallelizing before vectorizing: the code is slow because of Python loops, not because it needs more cores. Vectorize first, parallelize second.
-
 """
 
 tags = []
@@ -42,6 +41,7 @@ CORRECT PATTERNS (NOT bugs):
 Look for these BUGS:
 - pool.map(func, arr.tolist()) - converting array to list for element-by-element processing
 - executor.submit(func, x) for x in array - processing one element at a time
+- executor.map(func, array) - processing elements one at a time via map
 - Each parallel task processes ONE number/element
 
 NOT a bug:
@@ -54,7 +54,6 @@ NO = Correct: vectorized operations or parallelizing vectorized chunks
 
 warning_message = """
 Parallelizing before vectorizing: the code is slow because of Python loops, not because it needs more cores. Vectorize first, parallelize second.
-
 """
 
 min_confidence = 0.85

@@ -1,4 +1,4 @@
-# Pattern: par-006-pattern
+# Pattern: par-006-nondeterministic-parallel-order
 # Auto-migrated from YAML catalog on 2026-03-03
 
 [meta]
@@ -17,7 +17,6 @@ Collecting results from parallel tasks using imap_unordered or as_completed() wi
 
 explanation = """
 Non-deterministic parallel output: parallel tasks complete in arbitrary order. If results depend on order, sort by index after collection for reproducibility.
-
 """
 
 tags = []
@@ -47,11 +46,12 @@ NO = Correct: uses ordered map(), sorts results by index, OR downstream use is o
 
 warning_message = """
 Non-deterministic parallel output: parallel tasks complete in arbitrary order. If results depend on order, sort by index after collection for reproducibility.
-
 """
 
 min_confidence = 0.85
-false_positive_risks = []
+false_positive_risks = [
+    "Order-independent aggregations (sums, counts, histograms, set operations) using imap_unordered or as_completed",
+]
 
 [tests]
 
@@ -69,8 +69,8 @@ lines = [17]
 
 [[tests.positive]]
 file = "test_positive/concurrent_futures_unordered.py"
-description = "ThreadPoolExecutor with as_completed building sensor matrix - row order in np.vstack depends on completion order, corrupting sensor-to-row mapping"
-expected_issue = "Sensor readings stacked in arbitrary completion order, breaking row-to-sensor correspondence"
+description = "ThreadPoolExecutor with as_completed building sensor matrix - rows indexed positionally but order depends on completion time"
+expected_issue = "Sensor readings stacked in arbitrary completion order, then indexed by position assuming original sensor order"
 min_confidence = 0.85
 
 [tests.positive.expected_location]
@@ -81,18 +81,17 @@ lines = [16]
 
 [[tests.negative]]
 file = "test_negative/sorted_results.py"
-description = "Results include indices and are sorted after collection - preserves deterministic order"
+description = "Uses pool.map() which preserves input order - deterministic result collection"
 
 [[tests.negative]]
 file = "test_negative/ordered_map.py"
 description = "Using executor.map which preserves input order - deterministic results"
 
 
-# === Auto-generated entries (review and update) ===
 [[tests.positive]]
-file = "test_positive/async_gather.py"
-description = "Using imap_unordered and apply_async with callbacks - results collected without order preservation for order-sensitive array construction"
-expected_issue = "Results collected from imap_unordered and apply_async callbacks without index tracking, then used to build positional arrays"
+file = "test_positive/imap_unordered_spectrogram.py"
+description = "Using imap_unordered for spectrogram construction - rows collected in arbitrary completion order, corrupting frequency-to-row mapping"
+expected_issue = "Results collected from imap_unordered without index tracking, then used to build positional array"
 min_confidence = 0.85
 
 [tests.positive.expected_location]
@@ -104,3 +103,7 @@ lines = [11]
 [[tests.negative]]
 file = "test_negative/ordered_results.py"
 description = "Uses as_completed but tracks indices via dict and sorts afterward - preserves deterministic order"
+
+[[tests.negative]]
+file = "test_negative/aggregation_unordered.py"
+description = "Uses imap_unordered for order-independent aggregation (sum) - result is the same regardless of completion order"

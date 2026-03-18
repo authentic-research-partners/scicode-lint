@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 
 
-class LayerWithInplaceOp(nn.Module):
+class ScaledLinearLayer(nn.Module):
     def __init__(self):
         super().__init__()
         self.weight = nn.Parameter(torch.randn(10, 5))
@@ -12,7 +12,7 @@ class LayerWithInplaceOp(nn.Module):
         return torch.matmul(x, self.weight)
 
 
-def train_with_inplace_param_modification(model, data, target):
+def train_step(model, data, target):
     output = model(data)
     loss = ((output - target) ** 2).mean()
     loss.backward()

@@ -2,7 +2,7 @@ import numpy as np
 
 
 def normalize_new_array(data, target_mean=0, target_std=1):
-    """Create normalized array using np.empty - no slice mutation."""
+    """Normalize data into a pre-allocated output array."""
     result = np.empty_like(data)
     mean = data.mean(axis=0)
     std = data.std(axis=0) + 1e-8
@@ -20,7 +20,7 @@ def rolling_mean_output(arr, window_size=5):
 
 
 def stack_processed_chunks(data, chunk_size=10):
-    """Process chunks and stack results - no in-place slice modification."""
+    """Process data in chunks and concatenate results."""
     chunks = []
     for i in range(0, len(data), chunk_size):
         chunk = data[i : i + chunk_size] * 2

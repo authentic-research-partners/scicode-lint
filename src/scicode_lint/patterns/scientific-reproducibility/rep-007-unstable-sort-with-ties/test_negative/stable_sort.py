@@ -1,30 +1,13 @@
 import numpy as np
-import pandas as pd
 
 
-def rank_with_pandas(df: pd.DataFrame, column: str) -> pd.Series:
-    sorted_df = df.sort_values(column, kind="mergesort")
-    return sorted_df.index
+def rank_with_stable_sort(scores: np.ndarray) -> np.ndarray:
+    return np.argsort(scores, kind="stable")
 
 
-def get_top_k_with_tiebreaker(
-    values: np.ndarray,
-    secondary_key: np.ndarray,
-    k: int,
-) -> np.ndarray:
-    df = pd.DataFrame({"value": values, "tiebreaker": secondary_key})
-    sorted_df = df.sort_values(
-        ["value", "tiebreaker"],
-        ascending=[False, True],
-    )
-    return sorted_df.head(k).index.values
+def sort_stable(values: np.ndarray) -> np.ndarray:
+    return np.sort(values, kind="stable")
 
 
-class TieBreakerRanker:
-    def __init__(self, data: np.ndarray):
-        self.data = data
-        self.indices = np.arange(len(data))
-
-    def rank(self) -> np.ndarray:
-        order = np.lexsort((self.indices, self.data))
-        return order
+def lexsort_tiebreaker(primary: np.ndarray, secondary: np.ndarray) -> np.ndarray:
+    return np.lexsort((secondary, primary))

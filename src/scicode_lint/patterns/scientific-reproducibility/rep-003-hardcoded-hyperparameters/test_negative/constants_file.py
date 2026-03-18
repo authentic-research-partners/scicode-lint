@@ -1,46 +1,29 @@
-"""Configuration-driven experiment using YAML config files."""
+import torch
+import torch.nn as nn
 
-from dataclasses import dataclass, field
-from pathlib import Path
-
-import yaml
-
-
-@dataclass
-class ExperimentConfig:
-    """Configuration loaded from external YAML file."""
-
-    data_path: Path
-    output_path: Path
-    learning_rate: float = 0.001
-    batch_size: int = 32
-    epochs: int = 100
-    hidden_dims: list[int] = field(default_factory=lambda: [64, 128, 64])
-    dropout_rate: float = 0.5
-
-    @classmethod
-    def from_yaml(cls, config_path: Path) -> "ExperimentConfig":
-        with open(config_path) as f:
-            config_dict = yaml.safe_load(f)
-        config_dict["data_path"] = Path(config_dict["data_path"])
-        config_dict["output_path"] = Path(config_dict["output_path"])
-        return cls(**config_dict)
+LEARNING_RATE = 0.001
+BATCH_SIZE = 32
+EPOCHS = 100
+HIDDEN_DIM = 256
+DROPOUT = 0.3
+NUM_LAYERS = 3
 
 
-def run_experiment(config: ExperimentConfig):
-    """Run experiment using external configuration."""
-    print(f"Loading data from {config.data_path}")
-    print(f"Training with lr={config.learning_rate}, batch_size={config.batch_size}")
-    print(f"Model architecture: {config.hidden_dims}")
-    print(f"Results will be saved to {config.output_path}")
+def create_model(input_dim: int, output_dim: int) -> nn.Module:
+    layers = []
+    dim = input_dim
+    for _ in range(NUM_LAYERS):
+        layers.extend([nn.Linear(dim, HIDDEN_DIM), nn.ReLU(), nn.Dropout(DROPOUT)])
+        dim = HIDDEN_DIM
+    layers.append(nn.Linear(dim, output_dim))
+    return nn.Sequential(*layers)
 
 
-if __name__ == "__main__":
-    import argparse
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--config", required=True, help="Path to config YAML")
-    args = parser.parse_args()
-
-    config = ExperimentConfig.from_yaml(Path(args.config))
-    run_experiment(config)
+def train(model, train_loader):
+    optimizer = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
+    for epoch in range(EPOCHS):
+        for batch in train_loader:
+            loss = nn.functional.cross_entropy(model(batch[0]), batch[1])
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()

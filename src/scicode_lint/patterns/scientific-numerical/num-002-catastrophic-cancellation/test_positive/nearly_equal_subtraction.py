@@ -8,14 +8,14 @@ def exponential_difference(x):
     return diff
 
 
-def compute_nearly_equal_diff(a, b):
-    """Subtracting two nearly equal large scalars loses significant digits.
-
-    When a ≈ b (e.g., a=1000000.001, b=1000000.000), the subtraction
-    cancels all the significant digits held in the large integer part.
-    """
-    result = a - b
-    return result
+def beam_deflection_change(load_kn, length_m, elasticity, inertia):
+    """Compute change in beam deflection after a small load increase."""
+    base_load = load_kn
+    updated_load = load_kn + 0.001
+    deflection_before = (base_load * length_m**3) / (48 * elasticity * inertia)
+    deflection_after = (updated_load * length_m**3) / (48 * elasticity * inertia)
+    delta = deflection_after - deflection_before
+    return delta
 
 
 def distance_from_origin(point1, point2):

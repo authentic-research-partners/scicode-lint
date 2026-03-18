@@ -6,7 +6,7 @@ Run benchmarks to gather performance metrics for your system.
 
 ```bash
 # Ensure vLLM server is running
-bash src/scicode_lint/vllm/start_vllm.sh
+scicode-lint vllm-server start
 
 # Speed & concurrency metrics
 python benchmarks/speed_benchmark.py

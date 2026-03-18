@@ -1,19 +1,21 @@
-from sklearn.model_selection import KFold
+import pandas as pd
+from sklearn.ensemble import GradientBoostingClassifier
+from sklearn.model_selection import StratifiedKFold
+from sklearn.preprocessing import StandardScaler
 
 
-def time_series_cv(X, y, n_splits=5):
-    kf = KFold(n_splits=n_splits, shuffle=True, random_state=42)
-    scores = []
-    for train_idx, val_idx in kf.split(X):
-        scores.append(train_idx.mean())
-    return scores
+def evaluate_sensor_anomaly_detector(sensor_log: pd.DataFrame):
+    sensor_log = sensor_log.sort_values("timestamp")
+    X = sensor_log[["vibration", "temperature", "pressure", "rpm"]].values
+    y = sensor_log["is_anomaly"].values
 
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X)
 
-def validate_temporal(df, target_col):
-    from sklearn.ensemble import RandomForestRegressor
-    from sklearn.model_selection import cross_val_score
-
-    X = df.drop(columns=[target_col, "date"])
-    y = df[target_col]
-    model = RandomForestRegressor()
-    return cross_val_score(model, X, y, cv=5)
+    skf = StratifiedKFold(n_splits=10, shuffle=True, random_state=7)
+    model = GradientBoostingClassifier(n_estimators=200, max_depth=4)
+    fold_scores = []
+    for train_idx, test_idx in skf.split(X_scaled, y):
+        model.fit(X_scaled[train_idx], y[train_idx])
+        fold_scores.append(model.score(X_scaled[test_idx], y[test_idx]))
+    return fold_scores

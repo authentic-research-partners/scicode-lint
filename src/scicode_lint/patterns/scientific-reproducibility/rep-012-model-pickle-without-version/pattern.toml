@@ -24,19 +24,26 @@ references = [
 
 [detection]
 question = """
-Does this code save models with pickle/joblib without version info anywhere?
+Analyze model serialization for version tracking.
+
+Models saved with pickle/joblib without library version metadata may fail to load or produce different predictions when library versions change. This makes experiments non-reproducible across environments.
+
+Check WHAT is being saved, not just that pickle.dump() is used. What is being serialized must be a trained model, estimator, or pipeline object — NOT arrays of predictions, embeddings, or inference results.
 
 Check the ENTIRE function/file for version tracking:
-- pickle.dump() or joblib.dump() is used
+- pickle.dump() or joblib.dump() is used to save a MODEL object
 - BUT no __version__ appears anywhere (not in bundle, not in metadata file)
 
-Acceptable patterns (answer NO):
+NOT a bug (answer NO):
+- Saving inference results only: pickle.dump({"y_pred": preds, "embeddings": emb}) — data, not a model
+- Saving prediction arrays, scores, or evaluation outputs — not model artifacts
+- Model is only loaded (not trained in this code) and results are pickled
 - Version in bundle: pickle.dump({"model": model, "sklearn_version": sklearn.__version__})
 - Version in metadata file: json.dump({"sklearn_version": sklearn.__version__})
 - torch.save (not pickle)
 
-YES = Bug: model saved with pickle/joblib, but __version__ never appears in the function
-NO = Clean: version info saved (in bundle or separate file), or uses torch.save, or no serialization
+YES = Bug: trained model/estimator/pipeline saved with pickle/joblib, but __version__ never appears
+NO = Clean: saving inference results (not models), version info included, uses torch.save, or no serialization
 """
 
 warning_message = """
@@ -58,7 +65,7 @@ min_confidence = 0.85
 type = "function"
 name = "save_model_pickle"
 snippet = "pickle.dump(scaler"
-lines = [19, 22, 25]
+lines = [16, 19, 22]
 
 [[tests.negative]]
 file = "test_negative/torch_save.py"
@@ -94,4 +101,4 @@ min_confidence = 0.85
 type = "method"
 name = "save_checkpoint"
 snippet = "pickle.dump(checkpoint"
-lines = [23, 30]
+lines = [19]

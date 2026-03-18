@@ -26,6 +26,8 @@ references = ["https://pytorch.org/docs/stable/notes/amp_examples.html#gradient-
 question = """
 Analyze gradient accumulation in this training code.
 
+PREREQUISITE: This bug can ONLY exist in code with .backward() calls. If no backward() calls are present, answer NO immediately.
+
 When accumulating gradients over N steps to simulate larger batches, the loss must be divided by N before backward(). Without scaling, gradients are N times larger than intended, causing unstable training.
 
 Correct approach: (loss / accumulation_steps).backward() or equivalent.
@@ -33,12 +35,18 @@ Correct approach: (loss / accumulation_steps).backward() or equivalent.
 Does this code have gradient accumulation without loss scaling?
 
 Look for:
-- Multiple backward() calls before optimizer.step()
+- backward() called every iteration but optimizer.step() called every N iterations
 - Modulo-based step logic (if step % N == 0: optimizer.step())
 - Loss not divided by accumulation count before backward()
 
-YES = Bug found: gradient accumulation without loss scaling
-NO = Correct: loss scaled by accumulation steps, or no gradient accumulation
+NOT a bug (answer NO):
+- No gradient accumulation present (single backward() per optimizer.step())
+- No backward() calls at all (configuration/launcher/entry-point code)
+- Code that calls training helper functions (exp.run(), trainer.fit()) — accumulation logic is inside those
+- Loss already divided by accumulation_steps before backward()
+
+YES = Bug found: training loop with gradient accumulation (backward() visible) but loss not scaled
+NO = Correct: loss scaled, no accumulation, no backward() visible, or training delegated
 """
 
 warning_message = """
@@ -46,7 +54,10 @@ Gradient accumulation without loss scaling: accumulating over N steps without di
 """
 
 min_confidence = 0.85
-false_positive_risks = ["Intentional unscaled accumulation with adjusted learning rate"]
+false_positive_risks = [
+    "Intentional unscaled accumulation with adjusted learning rate",
+    "Configuration/launcher code with no training loop body visible",
+]
 
 [tests]
 
@@ -60,7 +71,7 @@ min_confidence = 0.85
 type = "function"
 name = "train_ddp_unscaled"
 snippet = "loss.backward()"
-lines = [24, 46]
+lines = [24]
 
 [[tests.positive]]
 file = "test_positive/accumulate_without_division.py"
@@ -72,7 +83,7 @@ min_confidence = 0.85
 type = "function"
 name = "train_multitask"
 snippet = "total.backward()"
-lines = [25, 41]
+lines = [25]
 
 [[tests.negative]]
 file = "test_negative/scaled_accumulation.py"
@@ -93,7 +104,7 @@ min_confidence = 0.85
 type = "class"
 name = "VAETrainer"
 snippet = "loss.backward()"
-lines = [25, 54]
+lines = [25]
 
 [[tests.negative]]
 file = "test_negative/accumulate_scaled.py"

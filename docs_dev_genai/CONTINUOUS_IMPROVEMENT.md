@@ -88,6 +88,8 @@ python pattern_verification/deterministic/validate.py pt-007
 **Eval validation:** Evals use **name-based matching** as the primary metric. The detected function/class name
 must match `expected_location.name` in pattern.toml. LLM outputs names (not line numbers), AST resolves to lines.
 
+**Focus line accuracy** is also tracked: does the linter's `focus_line` land on one of the expected buggy `lines` from pattern.toml? This is an observational metric (~42% baseline), not a gate — don't optimize for it at the expense of detection accuracy.
+
 **Note:** `semantic_validate.py` uses the `pattern-reviewer` agent (read-only) to identify issues. Fix issues directly in your Claude Code session.
 
 ### Multiple Patterns
@@ -228,9 +230,14 @@ python evals/integration/integration_eval.py --id baseline_v1
 | Pattern-specific | Iterate on individual patterns |
 | Integration | Holdout - test on fresh LLM-generated code |
 
-## Critical Constraint
+## Diagnosing Non-Determinism
+
+If a pattern produces inconsistent results across eval runs (passes sometimes, fails other times), this is a signal that the detection instructions are ambiguous. The model interprets unclear instructions differently depending on random state (temperature, sampling). Fix by making the detection question more precise — clear instructions produce consistent results regardless of randomness.
+
+## Critical Constraints
 
 - **No hints in test files** - pure code only, no comments about bugs (data leakage in evaluation)
+- **No shell loops** - Do NOT use `for p in ...; do ... done` or similar bash loops to run commands on multiple patterns. Shell loops require per-iteration approval in Claude Code, blocking automatic execution. Instead, use the tool's built-in multi-pattern support (e.g., `validate.py pt-007 pt-013`, `run_eval.py -p name1 -p name2`, `--category X`)
 
 ---
 

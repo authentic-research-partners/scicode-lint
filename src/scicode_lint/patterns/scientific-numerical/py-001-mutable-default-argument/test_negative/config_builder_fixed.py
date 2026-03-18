@@ -3,7 +3,7 @@ from dataclasses import dataclass, field
 
 @dataclass
 class Config:
-    """Dataclass with proper default factory for mutable fields."""
+    """Dataclass configuration for experiment tracking."""
 
     name: str
     tags: list = field(default_factory=list)
@@ -11,21 +11,21 @@ class Config:
 
 
 def apply_transforms(data, transforms: tuple = ()):
-    """Use immutable tuple as default - safe pattern."""
+    """Apply a sequence of transforms to the input data."""
     for transform in transforms:
         data = transform(data)
     return data
 
 
 def process_with_kwargs(item, **kwargs):
-    """Use **kwargs instead of mutable default dict."""
+    """Process an item with optional keyword parameters."""
     result = {"item": item}
     result.update(kwargs)
     return result
 
 
 class ImmutableDefaults:
-    """Class using immutable defaults only."""
+    """Container for labeled item counts."""
 
     def __init__(self, name: str, count: int = 0, label: str | None = None):
         self.name = name

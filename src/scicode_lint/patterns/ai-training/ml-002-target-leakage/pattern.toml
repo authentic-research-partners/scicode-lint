@@ -25,24 +25,37 @@ references = ["https://scikit-learn.org/stable/common_pitfalls.html#data-leakage
 
 [detection]
 question = """
-Does this code create features from target values on the FULL dataset (before train/test split)?
+Does this code create INPUT FEATURES by aggregating or encoding the TARGET COLUMN on data that includes test-set rows?
 
 WHY THIS MATTERS: Target leakage gives the model access to test answers during training, producing unrealistically high performance.
 
+ALL THREE conditions must be true for YES:
+1. Target column is the value being aggregated (groupby target, encode target, etc.)
+2. The result is used as an INPUT FEATURE added to X (not just for loss/weights/filtering)
+3. Done on data that includes test-set rows (full dataset before split)
+
+STOP — check: Is the output added to X as a new column/feature? If no, NOT LEAKAGE.
+STOP — check: Are the statistics computed once on the full dataset all-at-once (not in a sequential per-step loop where each observation extends the training window)? If sequential per-step, NOT LEAKAGE.
+
 LEAKAGE patterns (flag these):
-- df.groupby(...)['target'].transform('mean') on FULL dataframe
-- Computing target statistics BEFORE any train/test split
-- Using df['target'].shift() or rolling() without proper temporal split
+- df.groupby(...)['target'].transform('mean') added as a FEATURE on FULL dataframe
+- Computing target statistics BEFORE any train/test split and adding to X
+- Using df['target'].shift() or rolling() without proper temporal split, added as feature
 
 NOT LEAKAGE (don't flag):
-- train_df.groupby(...)['target'].agg(...) - stats from train subset only
+- Any statistics computed from the target that are passed to a loss function or optimizer (class_weights, pos_weight, sample_weight=...) — regardless of variable name. These configure training dynamics, they are never columns in X. Example: label_counts = Counter(y); weight = 1/label_counts[c] → passed to nn.CrossEntropyLoss(weight=...) — NOT LEAKAGE, this is loss weighting
+- Time-series walk-forward loops: In code that loops over test observations one-at-a-time (e.g., for observation in test:) and appends each observation to a growing training array before fitting the next model step — this is standard ARIMA/SARIMAX/rolling forecasting. The "target" becomes a training observation at the next step, which is correct sequential methodology, NOT leakage. Do NOT flag np.append(train, observation) or train_data.append(obs) inside a walk-forward loop
+- scaler.fit(X_train) — normalizing INPUT features, not encoding target
+- Loss function weights derived from target distribution
+- Pre-computed normalization constants applied to inputs
+- train_df.groupby(...)['target'].agg(...) — stats from train subset only
 - Statistics computed AFTER split, using only training rows
-- Filtering by date/mask BEFORE computing target aggregates
+- Target used only for fit(X, y) or loss computation
 
 Common target names: y, target, label, sales, price, amount, is_fraud.
 
-YES = Found: target features computed on full data before split
-NO = Clean: target used only for fit(X, y), or stats computed from train subset only
+YES = Found: target aggregated into INPUT FEATURES on full data before split
+NO = Clean: target used for loss/weights/filtering only, or stats from train subset only
 """
 
 warning_message = """

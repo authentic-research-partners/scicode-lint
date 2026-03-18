@@ -4,7 +4,7 @@ from sklearn.model_selection import train_test_split
 
 
 class ChurnPredictor:
-    """Customer churn prediction - moderate class imbalance."""
+    """Predicts whether customers will cancel their subscription."""
 
     def __init__(self):
         self.model = LogisticRegression()

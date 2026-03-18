@@ -28,28 +28,34 @@ references = [
 
 [detection]
 question = """
-Analyze numerical computations for catastrophic cancellation.
+Analyze numerical computations for catastrophic cancellation — subtracting two nearly equal numbers silently loses significant digits of precision, producing wrong results with no error raised.
 
-Subtracting nearly equal large numbers loses significant digits of precision. Classic example: computing variance as mean(x²) - mean(x)² can lose all precision when values are large.
+Classic example: computing variance as mean(x²) - mean(x)² loses all precision when values are large because x² terms dominate and their difference is tiny.
 
 Correct approach: Use stable algorithms (np.var, np.std) or numerically stable formulations.
 
-Does this code have catastrophic cancellation?
+Before flagging: confirm the subtraction is between two values computed from the SAME input array via different aggregation paths (e.g., one computes mean(x²), the other computes mean(x)²). If the operands come from separate data sources or represent predictions vs. ground truth, answer NO.
+
+Does this code subtract nearly equal numbers derived from the same data through separate aggregation paths?
 
 Look for:
-- Naive variance: mean_sq - mean**2 or mean(x**2) - mean(x)**2
-- Exponential differences: exp(a) - exp(b) where a ≈ b
-- Adding then subtracting large values: (large + small) - large
-- Numerical derivatives f(x+h)-f(x-h) with very small h
+- Naive variance: mean_sq - mean**2 or mean(x**2) - mean(x)**2 — subtracting two quantities derived from the SAME data through separate aggregation paths
+- Exponential differences: exp(a) - exp(b) where a ≈ b (use expm1 or log-space)
+- Numerical derivatives with tiny step size: (f(x+h) - f(x-h)) / (2*h) or (f(x+h) - f(x)) / h where h is very small (e.g., 1e-10) — f(x+h) and f(x-h) are nearly equal, their difference loses precision before dividing by h amplifies the error
 
-Safe patterns (ignore): np.var(), np.std(), sklearn scalers, distance calculations
+Do NOT flag:
+- targets - predictions, y_true - y_pred, actual - forecast, observed - modeled — these are residuals between semantically different quantities, not cancellation
+- Any subtraction where the two operands represent SEMANTICALLY DIFFERENT quantities (ground truth vs. estimate)
+- Subtraction used to compute errors, residuals, or differences for plotting/reporting
+- np.var(), np.std(), sklearn scalers, element-wise vector differences
+- np.gradient() or np.diff() — these use appropriate step sizes internally
 
-YES = Bug found: naive variance formula or unstable subtraction of large values
-NO = Correct: uses stable algorithms, or subtraction of well-separated values
+YES = Bug found: naive variance formula or subtraction of two values from same data via different aggregation paths
+NO = Correct: uses stable algorithms, residuals between independent quantities, or subtraction of well-separated values
 """
 
 warning_message = """
-Catastrophic cancellation: subtracting nearly equal large numbers loses precision. Use np.var() instead of mean(x^2)-mean(x)^2.
+Catastrophic cancellation: subtracting nearly equal numbers loses precision. Use np.var() instead of mean(x^2)-mean(x)^2, expm1/log1p for exponential differences, or np.gradient for numerical derivatives.
 """
 
 min_confidence = 0.85
@@ -75,7 +81,7 @@ lines = [7]
 
 [[tests.positive]]
 file = "test_positive/nearly_equal_subtraction.py"
-description = "Exponential differences, subtraction of clearly nearly-equal scalar values, and (large_val + small_delta) - large_val where subtraction loses significant digits"
+description = "Exponential differences, beam deflection change from near-identical loads, and (large_val + small_delta) - large_val where subtraction loses significant digits"
 expected_issue = "Subtraction of large nearly-equal values causes precision loss"
 min_confidence = 0.85
 

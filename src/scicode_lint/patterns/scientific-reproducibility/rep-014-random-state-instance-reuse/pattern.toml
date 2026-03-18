@@ -39,7 +39,7 @@ Look for:
 - Same variable used for direct calls (rng.randn(), rng.choice()) AND random_state= parameters
 - Shared RNG state across estimators or operations
 
-YES = Bug found: same RandomState instance passed to multiple estimators
+YES = Bug found: same RandomState instance passed to multiple estimators, or used for both direct calls (rng.randn) AND random_state= parameters
 NO = Correct: integer seeds used, or separate RandomState per estimator
 """
 
@@ -87,11 +87,11 @@ min_confidence = 0.85
 type = "function"
 name = "preprocess_pipeline"
 snippet = "random_state=rng"
-lines = [12, 16, 24]
+lines = [12, 13, 14, 16, 24]
 
 [[tests.positive]]
 file = "test_positive/shared_rng_bootstrap.py"
-description = "Bagging ensemble sharing RandomState across rng.choice() and DecisionTreeClassifier random_state parameter"
+description = "Bagging ensemble reusing RandomState for both direct calls (rng.choice) and estimator random_state parameter"
 expected_issue = "Same RandomState used for bootstrap sampling (rng.choice) and tree classifiers (random_state=rng)"
 min_confidence = 0.85
 

@@ -32,15 +32,21 @@ Shuffling time-series data in cross-validation causes temporal leakage: the mode
 
 Correct approach: Use TimeSeriesSplit or shuffle=False to respect temporal ordering.
 
-Does this code shuffle time-series data in cross-validation?
+Does this code shuffle time-series data in cross-validation fold assignment?
 
-Look for:
-- KFold(shuffle=True) or default shuffle on temporal data
-- cross_val_score() without TimeSeriesSplit on time-series
-- Date/time columns indicating temporal data with shuffled CV
+BOTH conditions must be true for YES:
+1. shuffle=True is used inside a CV SPLITTER constructor (KFold, StratifiedKFold) or cross_val_score call — NOT on a DataLoader or batch generator
+2. Explicit evidence of temporal data: datetime index, column names like date/time/timestamp, variable names like time_series, or data sorted by date
 
-YES = Bug found: shuffled cross-validation on time-series data
-NO = Correct: TimeSeriesSplit used, or shuffle=False, or non-temporal data
+NOT a bug (answer NO):
+- shuffle=True on a DataLoader or batch generator (mini-batch shuffling within a chronological training set is standard practice)
+- No evidence of temporal data (graph-structured data, tabular with no temporal columns, image batches)
+- TimeSeriesSplit used
+- shuffle=False on CV splitter
+- Data with no temporal ordering (cross-sectional surveys, image datasets, molecular data)
+
+YES = Bug found: shuffled CV SPLITTER on data with explicit temporal evidence
+NO = Correct: TimeSeriesSplit used, shuffle=False, DataLoader shuffle only, or non-temporal data
 """
 
 warning_message = """
@@ -56,15 +62,15 @@ false_positive_risks = []
 
 [[tests.positive]]
 file = "test_positive/shuffled_cv_timeseries.py"
-description = "Shuffled cross-validation on time-series data"
-expected_issue = "Temporal leakage: shuffled CV trains on future to predict past"
+description = "KFold(shuffle=True) on stock and weather time-series data with date/timestamp columns"
+expected_issue = "Temporal leakage: shuffled CV on time-series data with explicit date columns"
 min_confidence = 0.85
 
 [tests.positive.expected_location]
 type = "function"
-name = "cross_validate_with_shuffle"
+name = "evaluate_stock_prediction_shuffled"
 snippet = "KFold(n_splits=5, shuffle=True"
-lines = [9, 21]
+lines = [10]
 
 [[tests.negative]]
 file = "test_negative/timeseries_split_correct.py"
@@ -86,27 +92,27 @@ lines = [9]
 
 [[tests.positive]]
 file = "test_positive/shuffled_time_cv.py"
-description = "Time-series data shuffled with KFold(shuffle=True), causing temporal order to be lost."
-expected_issue = "Temporal leakage: KFold shuffle breaks temporal ordering on time-series data"
+description = "StratifiedKFold(shuffle=True) on sensor time-series anomaly detection data sorted by timestamp"
+expected_issue = "Temporal leakage: shuffled StratifiedKFold on timestamp-sorted sensor data"
 min_confidence = 0.85
 
 [tests.positive.expected_location]
 type = "function"
-name = "time_series_cv"
-snippet = "kf = KFold(n_splits=n_splits, shuffle=True, random_state=42)"
-lines = [5, 19]
+name = "evaluate_sensor_anomaly_detector"
+snippet = "StratifiedKFold(n_splits=10, shuffle=True, random_state=7)"
+lines = [15]
 
 [[tests.positive]]
 file = "test_positive/time_series_kfold.py"
-description = "Time-series stock/sales data validated with RepeatedKFold and StratifiedKFold shuffle=True, violating temporal ordering"
+description = "KFold(shuffle=True) in Pipeline-based class on stock data with timestamp column, plus StratifiedKFold(shuffle=True) on sales date data"
 expected_issue = "Temporal leakage: shuffled CV on time-series data trains on future to predict past"
 min_confidence = 0.85
 
 [tests.positive.expected_location]
 type = "class"
 name = "TimeSeriesValidator"
-snippet = "RepeatedKFold(n_splits=n_splits, n_repeats=n_repeats, random_state=42)"
-lines = [12, 33]
+snippet = "KFold(n_splits=n_splits, shuffle=True, random_state=42)"
+lines = [12]
 
 [[tests.negative]]
 file = "test_negative/temporal_cv.py"

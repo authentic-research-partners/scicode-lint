@@ -100,7 +100,7 @@ max_concurrent_evals = 150   # Client semaphore (how many requests we send)
 vllm_max_num_seqs = 256      # vLLM server capacity (passed to --max-num-seqs)
 ```
 
-vLLM server settings (read from config.toml by `start_vllm.sh`):
+vLLM server settings (read from config.toml by `scicode-lint vllm-server start`):
 - `--max-model-len`: 20096 (max_input_tokens + max_completion_tokens)
 - `--max-num-seqs`: 256 (vllm_max_num_seqs)
 - `--kv-cache-dtype`: fp8

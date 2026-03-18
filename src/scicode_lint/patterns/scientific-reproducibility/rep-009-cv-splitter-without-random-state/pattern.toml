@@ -38,6 +38,7 @@ Look for:
 - StratifiedKFold(shuffle=True) without random_state
 - ShuffleSplit() without random_state (ShuffleSplit always shuffles)
 - GroupShuffleSplit() without random_state
+- StratifiedShuffleSplit() without random_state
 - RepeatedKFold() or RepeatedStratifiedKFold() without random_state
 
 YES = Bug found: shuffled CV splitter without random_state
@@ -97,6 +98,6 @@ min_confidence = 0.85
 
 [tests.positive.expected_location]
 type = "function"
-name = "get_group_splitter"
+name = "evaluate_with_group_cv"
 snippet = "GroupShuffleSplit(n_splits"
-lines = [8, 13, 18]
+lines = [13]

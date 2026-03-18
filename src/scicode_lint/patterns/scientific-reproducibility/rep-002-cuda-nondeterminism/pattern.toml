@@ -40,17 +40,27 @@ IMPORTANT: Inference-only code does NOT need deterministic flags.
 Does this CUDA TRAINING code lack deterministic flags?
 
 Only flag if ALL of these are present:
-1. CUDA usage: .cuda() or .to(device)
-2. TRAINING indicators: model.train(), optimizer.step(), or loss.backward()
-3. Missing: torch.use_deterministic_algorithms(True) or torch.backends.cudnn.benchmark = False
+1. PyTorch framework: import torch or import pytorch_lightning must be visible
+2. Direct CUDA usage IN THIS CODE: .cuda() or .to(device) called on tensors/models (not just gpu=True config parameter)
+3. TRAINING ORCHESTRATION: The function/snippet is a top-level training loop or training entry point, not a helper called by the training loop. Indicators:
+   - Contains an epoch loop (for epoch in range(...))
+   - Calls optimizer.step() AND loss.backward() in the same scope
+   - Has a DataLoader iteration loop
+   - Is named train(), fit(), run(), main(), or run_training()
+   Model init helpers that only call .to(device) and return a model do NOT qualify even if model.train() appears.
+4. Missing torch.use_deterministic_algorithms(True), OR missing torch.backends.cudnn.benchmark = False, OR both are missing
 
 NOT a bug (answer NO):
+- Non-PyTorch frameworks: PaddlePaddle, JAX, TensorFlow (different determinism APIs)
 - Inference-only code: model.eval(), torch.no_grad(), no loss.backward()
 - Both deterministic flags are set
-- No CUDA usage
+- No CUDA usage in this code snippet (only class-level config like gpu=True)
+- Performance/benchmarking code: functions that measure execution time (time.time(), torch.cuda.Event, timeit), memory usage (torch.cuda.memory_allocated, torch.cuda.max_memory_reserved), or throughput, OR functions whose docstring/comments describe comparing strategies/profiling — even if not named benchmark_* or profile_*. Non-deterministic algorithms are intentional in benchmarks
+- No direct .cuda() or .to(device) calls visible
+- Model construction/initialization functions that only build and return a model (e.g., functions named init_model, build_model, create_model, setup_model, or any function whose body only does: instantiate model, call .to(device) or .cuda(), and return the model — with no optimizer, loss, or training loop present). Determinism flags are global PyTorch settings; they belong in training orchestration code, not in model factory helpers
 
-YES = Bug: CUDA training code without deterministic flags
-NO = Correct: Inference-only, or deterministic flags set, or no CUDA
+YES = Bug: PyTorch CUDA training orchestration code with direct .cuda()/.to(device) calls without deterministic flags
+NO = Correct: non-PyTorch, inference-only, deterministic flags set, no direct CUDA usage, benchmarking code, or model factory/init helper
 """
 
 warning_message = """
@@ -93,7 +103,7 @@ description = "Properly sets both torch.use_deterministic_algorithms(True) and t
 
 [[tests.negative]]
 file = "test_negative/reproducible_gpu_setup.py"
-description = "Complete deterministic setup for GPU training with both required flags set."
+description = "Complete deterministic setup for CUDA with both required flags set before model/data operations."
 
 
 # === Auto-generated entries (review and update) ===
@@ -107,7 +117,7 @@ min_confidence = 0.85
 type = "function"
 name = "train_cnn"
 snippet = "inputs.cuda()"
-lines = [8]
+lines = [9]
 
 [[tests.negative]]
 file = "test_negative/cudnn_deterministic.py"

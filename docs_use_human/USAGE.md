@@ -17,13 +17,13 @@ The linter requires a vLLM server. You can run locally or connect to a remote se
 pip install scicode-lint[vllm-server]
 
 # Start vLLM server (auto-detects GPU, validates FP8 support)
-bash src/scicode_lint/vllm/start_vllm.sh
+scicode-lint vllm-server start
 
 # Or run in background
-nohup bash src/scicode_lint/vllm/start_vllm.sh > /tmp/vllm.log 2>&1 &
+nohup scicode-lint vllm-server start > /tmp/vllm.log 2>&1 &
 
 # Restart with different settings
-bash src/scicode_lint/vllm/start_vllm.sh --restart
+scicode-lint vllm-server start --restart
 ```
 
 The script auto-detects GPU capabilities and configures optimal settings. First run downloads the model (~8GB).

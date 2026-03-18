@@ -35,11 +35,11 @@ NumPy arrays are passed by reference. Modifying an array parameter in-place (dat
 
 Correct approach: Copy the array first (data = data.copy()) or document the mutation.
 
-Does this function modify array parameters in-place?
+Does any function in this code modify array parameters in-place?
 
 Look for:
-- In-place operators (-=, /=, *=) on function parameters
-- Index assignment (param[i] = value) on array parameters
+- In-place operators (+=, -=, /=, *=) on function parameters
+- Index assignment (param[i] = value) or slice assignment (param[:] = ...) on array parameters
 - Operations that mutate the caller's data without .copy()
 
 YES = Bug found: function parameter modified in-place without copy
@@ -105,4 +105,4 @@ description = "Functions that create new arrays via operations like division, np
 
 [[tests.negative]]
 file = "test_negative/data_transform_copy.py"
-description = "Functions that create new arrays via non-mutating operations (*, +) or explicitly call .copy() before modifying"
+description = "Functions that create new arrays via non-mutating operations (rolling mean, FFT, interpolation, broadcasting) without modifying input parameters"

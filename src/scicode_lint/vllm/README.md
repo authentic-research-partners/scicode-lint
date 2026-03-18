@@ -15,22 +15,24 @@ Programmatic server management for GenAI agents:
 
 See [VLLM_UTILITIES.md](../../../docs_use_genai/VLLM_UTILITIES.md) for complete documentation.
 
-### Bash Script (`start_vllm.sh`)
+### CLI Command
 
-Manual server startup for humans:
+Server management for humans:
 ```bash
 # Start with defaults
-bash src/scicode_lint/vllm/start_vllm.sh
+scicode-lint vllm-server start
 
 # Start with custom model
-bash src/scicode_lint/vllm/start_vllm.sh "meta-llama/Llama-3.1-8B-Instruct"
+scicode-lint vllm-server start --model "meta-llama/Llama-3.1-8B-Instruct"
 
-# Start with full config
-bash src/scicode_lint/vllm/start_vllm.sh \
-    "RedHatAI/Qwen3-8B-FP8-dynamic" \
-    5001 \
-    12000 \
-    0.85
+# Restart server
+scicode-lint vllm-server start --restart
+
+# Check status
+scicode-lint vllm-server status
+
+# Stop server
+scicode-lint vllm-server stop
 ```
 
 ## Quick Examples
@@ -40,5 +42,5 @@ Use `print_system_info()` to check GPU and vLLM status, or `get_gpu_info()` for 
 ## Files
 
 - `__init__.py` - Python utilities module
-- `start_vllm.sh` - Bash script for manual startup
+- `start_vllm.sh` - Bash script (called by `scicode-lint vllm-server start`)
 - `README.md` - This file

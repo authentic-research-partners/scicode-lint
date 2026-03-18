@@ -25,10 +25,15 @@ references = ["https://numpy.org/doc/stable/user/basics.creation.html"]
 
 [detection]
 question = """
-Does this code call np.concatenate, np.vstack, np.append, np.zeros, np.empty, or np.array inside a loop?
+Does this code call np.concatenate, np.vstack, np.append, np.zeros, np.ones, np.full, np.empty, or np.array inside a loop?
 
-YES = Found: these functions called inside for/while loop body
-NO = Clean: arrays pre-allocated before loop, or only scalars appended to list then converted once at end
+YES = Found: np.concatenate/vstack/append/zeros/ones/full/empty/array called inside a for/while loop body, AND the result is assigned to a variable (i.e., arr = np.append(arr, x) or result = np.zeros(...)), AND this appears to be a main processing loop (not a rare edge-case branch)
+
+NO = Clean:
+- Arrays pre-allocated before loop, or only scalars appended to list then converted once at end
+- The np.append/np.array result is NOT assigned to a variable (discarded return value is a correctness bug, not a perf issue)
+- The loop only runs as a rare edge case or error handler on tiny data (e.g., padding a sequence to exact length), not as the primary processing loop
+- The allocation is inside a function body that is called once per invocation — only flag if the loop is directly visible in the code being analyzed (not inferred from callers)
 """
 
 warning_message = """
@@ -62,7 +67,7 @@ min_confidence = 0.85
 type = "function"
 name = "compute_features"
 snippet = "features.append(np.array(row_features))"
-lines = [8, 15, 24]
+lines = [8]
 
 [[tests.positive]]
 file = "test_positive/concatenate_in_loop.py"
@@ -82,7 +87,7 @@ description = "Array pre-allocated before loop and filled using indexing - effic
 
 [[tests.negative]]
 file = "test_negative/list_then_array.py"
-description = "Scalars appended to list then converted to array once at end - acceptable pattern"
+description = "Values appended to list then converted to array once at end - acceptable pattern"
 
 [[tests.context_dependent]]
 file = "test_context_dependent/unknown_size.py"

@@ -1,13 +1,24 @@
 import numpy as np
 
 
-def compute_normalized_distance(vectors):
-    diff = vectors - np.mean(vectors, axis=0)
+def column_stddev(data):
+    mean = np.mean(data, axis=0)
+    diff = data - mean
     squared = diff**2
-    summed = np.sum(squared, axis=1)
-    distances = np.sqrt(summed)
-    return distances
+    variance = np.mean(squared, axis=0)
+    stddev = np.sqrt(variance)
+    return stddev
 
 
-data = np.random.randn(100000, 500)
-result = compute_normalized_distance(data)
+def frobenius_distance(A, B):
+    diff = A - B
+    squared = diff**2
+    total = np.sum(squared)
+    dist = np.sqrt(total)
+    return dist
+
+
+measurements = np.random.randn(50000, 200)
+stds = column_stddev(measurements)
+ref = np.random.randn(50000, 200)
+fdist = frobenius_distance(measurements, ref)

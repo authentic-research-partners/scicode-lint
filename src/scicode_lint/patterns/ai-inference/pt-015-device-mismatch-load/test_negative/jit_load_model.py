@@ -19,23 +19,21 @@ def save_scripted_model(model, path):
     scripted.save(path)
 
 
-def load_scripted_model(path, device="cpu"):
-    model = torch.jit.load(path, map_location=device)
+def load_scripted_model(path):
+    model = torch.jit.load(path)
     return model
 
 
 class InferenceEngine:
-    def __init__(self, model_path, device="cpu"):
-        self.device = device
-        self.model = torch.jit.load(model_path, map_location=device)
+    def __init__(self, model_path):
+        self.model = torch.jit.load(model_path)
         self.model.eval()
 
     def predict(self, inputs):
-        inputs = inputs.to(self.device)
         return self.model(inputs)
 
 
 def load_traced_model(path):
-    model = torch.jit.load(path, map_location="cpu")
+    model = torch.jit.load(path)
     model.eval()
     return model

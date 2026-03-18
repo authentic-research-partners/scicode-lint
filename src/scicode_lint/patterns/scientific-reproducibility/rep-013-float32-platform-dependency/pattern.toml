@@ -9,11 +9,11 @@ updated = "2026-03-08"
 author = "scicode-lint"
 
 description = """
-Using float32 precision where bit-exact reproducibility is required across platforms. float32 results can differ across CPU architectures and math library implementations.
+Comparing float32 values with exact equality (== or !=). float32 arithmetic varies across CPU architectures and math libraries, making exact comparisons unreliable and non-reproducible.
 """
 
 explanation = """
-For reproducible results across platforms, prefer float64 for critical computations or document acceptable tolerance for float32 results.
+float32 exact equality comparisons are unreliable across platforms. Use tolerance-based comparisons (np.isclose, np.allclose) or float64 for exact checks.
 """
 
 tags = ["numpy", "floating-point", "precision", "reproducibility"]
@@ -93,9 +93,9 @@ min_confidence = 0.85
 
 [tests.positive.expected_location]
 type = "function"
-name = "check_convergence"
-snippet = "return loss == threshold"
-lines = [5]
+name = "validate_output"
+snippet = "np.float32(result) == np.float32(expected)"
+lines = [9]
 
 [[tests.positive]]
 file = "test_positive/float32_exact_comparison.py"

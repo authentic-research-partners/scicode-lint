@@ -94,9 +94,9 @@ min_confidence = 0.85
 
 [tests.positive.expected_location]
 type = "function"
-name = "setup_experiment"
-snippet = "np.random.seed(42)"
-lines = [7]
+name = "split_data"
+snippet = "train_test_split(X, y, test_size=0.2)"
+lines = [11]
 
 [[tests.negative]]
 file = "test_negative/complete_seed.py"
@@ -104,4 +104,4 @@ description = "Uses helper function to set all random seeds (random, numpy, torc
 
 [[tests.negative]]
 file = "test_negative/complete_seeding.py"
-description = "Sets all seeds globally and correctly uses random_state parameter in train_test_split for reproducible data splits"
+description = "Uses a reproducible context manager to set and restore all random states (random, numpy, torch, CUDA)"

@@ -85,15 +85,15 @@ description = "Correct usage: non-in-place tensor operations for normalization"
 
 [[tests.positive]]
 file = "test_positive/weight_normalize.py"
-description = "In-place division (div_) on nn.Parameter within forward() and in-place multiplication on parameters during weight decay"
-expected_issue = "In-place operations on parameters that require gradients"
+description = "In-place division (div_) on nn.Parameter within forward() method"
+expected_issue = "In-place operation on parameter that requires gradients"
 min_confidence = 0.85
 
 [tests.positive.expected_location]
 type = "method"
 name = "forward"
 snippet = "self.weight.div_(self.weight.norm(dim=1, keepdim=True))"
-lines = [12, 18]
+lines = [12]
 
 [[tests.negative]]
 file = "test_negative/weight_normalize_correct.py"

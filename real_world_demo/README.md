@@ -431,10 +431,10 @@ For standalone comparison: `python -m real_world_demo.sources.leakage_paper.comp
 |--------|-------|
 | Papers with self-contained files | 32/38 |
 | Files analyzed | 120 |
-| Files with findings | 75.0% (90/120) |
-| Total findings | 219 |
-| **Verified precision** | **45.2%** (99/219 valid) |
-| Papers with verified real bugs | 75% (24/32) |
+| Files with findings | 58.0% (69/119) |
+| Total findings | 137 |
+| **Verified precision** | **62.0%** (85/137 valid) |
+| Papers with verified real bugs | 72% (23/32) |
 
 **Top patterns by precision:**
 | Pattern | Issue | Valid | Total | Precision |
@@ -452,9 +452,9 @@ For standalone comparison: `python -m real_world_demo.sources.leakage_paper.comp
 |--------|-------|
 | Papers with self-contained files | 17/35 |
 | Files analyzed | 45 |
-| Files with findings | 82% (37/45) |
-| Total findings | 103 |
-| **Verified precision** | **37.9%** (39/103 valid) |
+| Files with findings | 76% (34/45) |
+| Total findings | 74 |
+| **Verified precision** | **54.1%** (40/74 valid) |
 | Papers with verified real bugs | 71% (12/17) |
 
 Paper set details: [`paper_sets/`](paper_sets/)

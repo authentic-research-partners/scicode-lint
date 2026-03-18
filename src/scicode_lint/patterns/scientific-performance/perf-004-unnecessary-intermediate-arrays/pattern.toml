@@ -29,9 +29,9 @@ references = [
 
 [detection]
 question = """
-Analyze computations for unnecessary intermediate arrays that are each used only once.
+Analyze computations for unnecessary intermediate arrays that manually reimplement a mathematical operation already available as a single optimized NumPy/PyTorch/SciPy function.
 
-Creating named intermediate arrays that are each used only once wastes memory. The key indicator is a chain of assignments where each variable is consumed by exactly one subsequent operation and never referenced again.
+The bug: A chain of named intermediate arrays that reimplements a known mathematical primitive, when a single library function would compute the same result without materializing intermediates.
 
 Example of the problem:
   diff = vectors - mean
@@ -39,14 +39,35 @@ Example of the problem:
   summed = np.sum(squared, axis=1)
   distances = np.sqrt(summed)
 
-Each intermediate (diff, squared, summed) is used exactly once, so the entire chain could be replaced by np.linalg.norm(vectors - mean, axis=1).
+This manually reimplements L2 norm and could be replaced by np.linalg.norm(vectors - mean, axis=1).
 
-Does this code create multiple named intermediate arrays where each is used only once and could be eliminated?
+Known reimplementation patterns to look for:
+- L2/L1/Lp norms: diff=a-b; sq=diff**2; s=sum(sq); sqrt(s) → np.linalg.norm(a-b). The subtraction IS part of the replaceable chain — np.linalg.norm(a - b, axis=1) handles it.
+- Dot products: sum(a * b) → np.dot() or np.einsum()
+- Pairwise distances: manual loops → scipy.spatial.distance.cdist()
+- Matrix norms: manual computation → np.linalg.norm(matrix)
+- Cosine similarity: dot/(norm_a*norm_b) → scipy.spatial.distance.cosine or F.cosine_similarity
 
-Important: An intermediate that is reused in multiple expressions is NOT unnecessary - it avoids redundant recomputation. Only flag intermediates that are consumed exactly once.
+Does this code manually reimplement a mathematical operation that a single NumPy/PyTorch/SciPy function already provides?
 
-YES = Bug found: multiple named variables each used only once in a chain of operations
-NO = Correct: intermediates are reused multiple times, or code uses single expressions, in-place operations, or optimized functions like np.linalg.norm
+The chain must be replaceable by a SPECIFIC, NAMED single function. If no such function exists for the operation, answer NO.
+
+BEFORE answering YES, check: Is each intermediate used EXACTLY ONCE? If any intermediate is used in 2+ different expressions (e.g., diff used for both norm and arctan2), it is NOT unnecessary — answer NO.
+
+Correct patterns that must NOT be flagged:
+- Inline expression chains with no named intermediates: torch.log(1 + torch.exp(x)), np.sqrt(np.sum(x**2)), etc. If no intermediate is assigned to a variable name, answer NO
+- Activation functions implemented as expressions: torch.log(1 + torch.exp(x)) (softplus), torch.sigmoid(x), x * torch.tanh(x) (swish/SiLU), etc. Even if torch.nn.functional equivalents exist, these are not the intermediate-array materialization this pattern targets
+- Necessary output construction from incompatible input formats: building a dense array from sparse (index, value) pairs, or constructing an output buffer that must be fully built before it can be consumed. If the intermediate IS the output of a conversion step (not a throwaway temp), answer NO
+- In-place operations (-=, /=, *=, np.clip with out=) — no intermediates created
+- Pre-allocation: result = np.zeros(...); result[i] = val (output buffer, not temporary)
+- Algorithmic chains (sorting+indexing+stacking, batch collation, per-variable normalization) with no single-function equivalent
+- Operations on fixed-size small arrays (< ~100 elements regardless of input)
+- PyTorch/NumPy built-in operations like torch.norm(), np.linalg.norm() (already optimized)
+- Code with no array math (training loops, data loading, model setup)
+- Note: "single function" means a single NumPy/PyTorch/SciPy FUNCTION CALL like np.linalg.norm(), NOT a class like StandardScaler
+
+YES = Bug found: 2+ named intermediate variables (assigned with =), each used exactly once, whose sole purpose is computing a final result replaceable by a single named library function (e.g., np.linalg.norm)
+NO = Correct: any intermediate reused in 2+ places, no single-function replacement exists, no named intermediates, or uses optimized functions
 """
 
 warning_message = """
@@ -57,32 +78,35 @@ Materializing large intermediate arrays wastes memory. Use np.linalg.norm or in-
 min_confidence = 0.85
 false_positive_risks = [
     "Intermediates that are reused multiple times are efficient, not unnecessary",
+    "Pre-allocation patterns (np.zeros then indexed assignment) look like chains but are not",
+    "Algorithmic chains with no single-function replacement (sorting, collation, per-variable ops)",
+    "Operations on fixed-size small arrays where memory waste is negligible",
 ]
 
 [tests]
 
 [[tests.positive]]
 file = "test_positive/intermediate_array_creation.py"
-description = "Creates multiple large intermediate arrays (diff, squared, summed) when np.linalg.norm would avoid all temporaries"
-expected_issue = "Multiple large intermediate arrays created for norm computation"
+description = "Manual column-wise std deviation via mean/diff/squared/variance/sqrt chain instead of np.std, and Frobenius norm via diff/squared/sum/sqrt instead of np.linalg.norm"
+expected_issue = "Manual reimplementation of standard deviation and Frobenius norm via intermediate arrays"
 min_confidence = 0.85
 
 [tests.positive.expected_location]
 type = "function"
-name = "compute_normalized_distance"
+name = "column_stddev"
 snippet = "squared = diff**2"
-lines = [6]
+lines = [7]
 
 [[tests.positive]]
 file = "test_positive/manual_norm_computation.py"
-description = "Signal processing pipeline with multiple named intermediates (windowed, filtered, amplitudes, normalized, clipped) each used only once"
-expected_issue = "Multiple intermediate arrays created in signal processing pipeline"
+description = "Pairwise distance manually reimplementing L2 norm via diff/squared/summed/sqrt chain instead of np.linalg.norm"
+expected_issue = "Manual L2 norm reimplementation via intermediate arrays replaceable by np.linalg.norm"
 min_confidence = 0.85
 
 [tests.positive.expected_location]
 type = "function"
-name = "apply_bandpass_filter"
-snippet = "windowed = spectrum * mask"
+name = "compute_pairwise_distances"
+snippet = "squared = diff**2"
 lines = [9]
 
 [[tests.negative]]
@@ -95,15 +119,15 @@ description = "Uses in-place operations with -= and /= to avoid creating tempora
 
 [[tests.positive]]
 file = "test_positive/chained_ops.py"
-description = "Creates multiple unnecessary intermediate arrays (temp1, temp2, temp3, temp4) through chained operations instead of combining computations"
-expected_issue = "Multiple intermediate arrays created through sequential operations"
+description = "Manual L2 norm and cosine similarity via diff/squared/sum/sqrt chains instead of np.linalg.norm and np.dot"
+expected_issue = "Manual reimplementation of L2 norm and cosine similarity via intermediate arrays"
 min_confidence = 0.85
 
 [tests.positive.expected_location]
 type = "function"
 name = "process_data"
-snippet = "temp1 = data * 2"
-lines = [5]
+snippet = "squared = diff**2"
+lines = [6]
 
 [[tests.negative]]
 file = "test_negative/chained_ops_inplace.py"

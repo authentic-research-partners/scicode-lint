@@ -36,15 +36,23 @@ Floating point arithmetic has precision limitations: 0.1 + 0.2 != 0.3 due to bin
 
 Correct approach: Use np.isclose(), np.allclose(), or abs(a-b) < epsilon.
 
-Does this code compare floats with exact equality?
+Does this code compare floats with exact equality where arithmetic rounding could cause the two sides to diverge?
 
 Look for:
-- if x == 0.0 or value != expected on computed floats
-- (arr1 == arr2).all() on float arrays
-- Convergence checks without tolerance
+- norm == 1.0 after computing np.linalg.norm(x) (checking if a vector was normalized), or total == 1.0 after summing probabilities — these compare an arithmetic RESULT to an expected value, not a sentinel
+- current == target where both sides are float variables from arithmetic results (e.g., convergence check comparing computed value to a target)
+- (arr1 == arr2).all() on float arrays from different computations
 
-YES = Bug found: float comparison using == or != without tolerance
-NO = Correct: uses isclose/allclose/epsilon, or comparing integers/indices
+NOT a bug (answer NO):
+- x == 0 or norm == 0 used as a guard to detect a zero vector or absent value — checking for exact zero is semantically correct and intentional; isclose(x, 0) would be wrong there
+- v == max(collection) or v == some_dict[key] where the right-hand side is the same float retrieved unmodified from the same data structure — no arithmetic has occurred between the two sides, so the comparison is bit-exact by construction
+- Comparing integer counts, boolean flags, or integer-valued tensors to 0 or other integers — e.g., num_elements != 0, all_targets == 0 on a count array
+- uses isclose/allclose/epsilon
+- comparing integers/indices
+- np.sign() comparisons (returns integer-like values)
+
+YES = Bug found: float from arithmetic result compared using == or != to an independent expected value without tolerance
+NO = Correct: uses isclose/allclose/epsilon, exact-zero sentinel check, value compared to itself from same container, or comparing integers
 """
 
 warning_message = """
@@ -53,7 +61,9 @@ Never use == on floats. 0.1 + 0.2 != 0.3 in floating point. Use np.isclose() or 
 """
 
 min_confidence = 0.85
-false_positive_risks = []
+false_positive_risks = [
+    "np.sign() returns float but has integer-like values (-1, 0, 1) — equality comparison is safe",
+]
 
 [tests]
 
@@ -67,7 +77,7 @@ min_confidence = 0.85
 type = "function"
 name = "check_convergence"
 snippet = "if current == target:"
-lines = [5, 11]
+lines = [5]
 
 [[tests.positive]]
 file = "test_positive/array_comparison.py"
@@ -79,7 +89,7 @@ min_confidence = 0.85
 type = "function"
 name = "compare_arrays"
 snippet = "if (arr1 == arr2).all():"
-lines = [5, 11]
+lines = [5]
 
 [[tests.negative]]
 file = "test_negative/proper_tolerance.py"
@@ -98,9 +108,13 @@ min_confidence = 0.85
 [tests.positive.expected_location]
 type = "function"
 name = "check_normalized"
-snippet = "== 1.0"
-lines = [6, 11, 19]
+snippet = "norm == 1.0"
+lines = [6]
 
 [[tests.negative]]
 file = "test_negative/tolerance_check_correct.py"
 description = "Linear algebra routines (softmax, Gram-Schmidt, power iteration) that use norm-based and abs() convergence checks, with no float equality comparisons"
+
+[[tests.negative]]
+file = "test_negative/zero_sentinel_check.py"
+description = "Scientific routines using == 0 and != 0 as guards before division or normalization — exact-zero sentinel checks, not arithmetic comparisons"

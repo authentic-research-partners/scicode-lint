@@ -38,7 +38,7 @@ Correct approach: Use None as default, create mutable inside: if items is None: 
 Does this code use mutable default arguments?
 
 Look for:
-- def func(data=[]) or def func(cache={})
+- def func(data=[]) or def func(cache={}) or def func(seen=set())
 - Default arguments that are lists, dicts, or sets
 - Functions that modify their default argument
 
@@ -70,15 +70,15 @@ lines = [4]
 
 [[tests.positive]]
 file = "test_positive/cache_defaults.py"
-description = "Weight caching with shared dict default, metric logging with shared list default, and FeatureSelector class with shared set() default - demonstrating dict, list, and set mutable defaults"
-expected_issue = "Dictionary or list default argument mutated across invocations"
+description = "Class __init__ methods with mutable defaults (transforms=[], window_values=[], completed_ids=set()) causing shared state across instances"
+expected_issue = "Mutable default argument in class constructor shared across instances"
 min_confidence = 0.85
 
 [tests.positive.expected_location]
-type = "function"
-name = "make_layer"
-snippet = "def make_layer(input_dim, output_dim, weight_cache={}):"
-lines = [4]
+type = "class"
+name = "DataProcessor"
+snippet = "def __init__(self, transforms=[]):"
+lines = [5]
 
 [[tests.positive]]
 file = "test_positive/config_builder.py"
@@ -102,4 +102,4 @@ description = "Functions with immutable defaults (floats, ints, strings, tuples)
 
 [[tests.negative]]
 file = "test_negative/config_builder_fixed.py"
-description = "Correct implementations using None as default with if arg is None checks to create fresh mutable objects for each invocation"
+description = "Safe patterns: dataclass field(default_factory) for mutable fields, immutable tuple defaults, **kwargs delegation, and frozen-style containers"

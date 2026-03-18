@@ -7,7 +7,6 @@ from real-world scientific ML code analysis.
 import argparse
 import json
 import sqlite3
-import statistics
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -24,334 +23,18 @@ from .database import (
     init_db,
     list_runs,
 )
+from .report_critical import generate_valid_critical_report
+from .report_queries import (
+    get_example_findings,
+    get_findings_distribution,
+    get_papers_by_severity,
+    get_top_patterns,
+    get_verification_by_severity,
+)
 from .sources.leakage_paper.compare_ground_truth import compare as compare_ground_truth
 
-
-class DistributionStats:
-    """Statistics for a distribution of values."""
-
-    def __init__(self, values: list[int]) -> None:
-        self.count = len(values)
-        if values:
-            self.min = min(values)
-            self.max = max(values)
-            self.mean = statistics.mean(values)
-            self.stdev = statistics.stdev(values) if len(values) > 1 else 0.0
-            self.median = statistics.median(values)
-        else:
-            self.min = self.max = 0
-            self.mean = self.stdev = self.median = 0.0
-
-
-def get_findings_distribution(
-    conn: sqlite3.Connection, run_id: int, *, verified_only: bool = False
-) -> dict[str, DistributionStats]:
-    """Get distribution stats for findings per paper and per severity.
-
-    Args:
-        conn: Database connection.
-        run_id: Analysis run ID.
-        verified_only: If True, only include findings with completed verification.
-
-    Returns:
-        Dict with 'per_paper' and 'per_paper_by_severity' distribution stats.
-    """
-    result: dict[str, DistributionStats] = {}
-
-    # Build verification join clause
-    verification_join = (
-        "INNER JOIN finding_verifications fv ON fv.finding_id = fn.id AND fv.status != 'error'"
-        if verified_only
-        else ""
-    )
-
-    # Findings per paper (total)
-    cursor = conn.execute(
-        f"""
-        SELECT r.paper_id, COUNT(fn.id) as finding_count
-        FROM findings fn
-        JOIN file_analyses fa ON fa.id = fn.file_analysis_id
-        JOIN files f ON f.id = fa.file_id
-        JOIN repos r ON r.id = f.repo_id
-        {verification_join}
-        WHERE fa.run_id = ? AND r.paper_id IS NOT NULL
-        GROUP BY r.paper_id
-        """,
-        (run_id,),
-    )
-    counts = [row[1] for row in cursor.fetchall()]
-    result["per_paper"] = DistributionStats(counts)
-
-    # Findings per paper by severity
-    for severity in ["critical", "high", "medium", "low"]:
-        cursor = conn.execute(
-            f"""
-            SELECT r.paper_id, COUNT(fn.id) as finding_count
-            FROM findings fn
-            JOIN file_analyses fa ON fa.id = fn.file_analysis_id
-            JOIN files f ON f.id = fa.file_id
-            JOIN repos r ON r.id = f.repo_id
-            {verification_join}
-            WHERE fa.run_id = ? AND r.paper_id IS NOT NULL AND fn.severity = ?
-            GROUP BY r.paper_id
-            """,
-            (run_id, severity),
-        )
-        counts = [row[1] for row in cursor.fetchall()]
-        result[severity] = DistributionStats(counts)
-
-    return result
-
-
-def get_papers_by_severity(
-    conn: sqlite3.Connection, run_id: int, *, verified_only: bool = False
-) -> dict[str, int]:
-    """Get paper counts by severity (papers with at least one finding of that severity).
-
-    Args:
-        conn: Database connection.
-        run_id: Analysis run ID.
-        verified_only: If True, only include findings with completed verification.
-
-    Returns:
-        Dict mapping severity to paper count. A paper with both critical and medium
-        findings will be counted in both categories.
-    """
-    verification_join = (
-        "INNER JOIN finding_verifications fv ON fv.finding_id = fn.id AND fv.status != 'error'"
-        if verified_only
-        else ""
-    )
-
-    # Count distinct papers per severity level
-    cursor = conn.execute(
-        f"""
-        SELECT
-            fn.severity,
-            COUNT(DISTINCT r.paper_id) as paper_count
-        FROM findings fn
-        JOIN file_analyses fa ON fa.id = fn.file_analysis_id
-        JOIN files f ON f.id = fa.file_id
-        JOIN repos r ON r.id = f.repo_id
-        {verification_join}
-        WHERE fa.run_id = ? AND r.paper_id IS NOT NULL
-        GROUP BY fn.severity
-        """,
-        (run_id,),
-    )
-
-    counts: dict[str, int] = {"critical": 0, "high": 0, "medium": 0, "low": 0}
-    for row in cursor.fetchall():
-        sev = row[0] or "low"
-        if sev in counts:
-            counts[sev] = row[1]
-
-    return counts
-
-
-def get_verification_by_severity(
-    conn: sqlite3.Connection, run_id: int
-) -> dict[str, dict[str, int]]:
-    """Get verification stats broken down by severity.
-
-    Args:
-        conn: Database connection.
-        run_id: Analysis run ID.
-
-    Returns:
-        Dict with severities as keys, each containing {valid, invalid, uncertain, pending}.
-    """
-    # Get all findings with their verification status (if any)
-    cursor = conn.execute(
-        """
-        SELECT
-            fn.severity,
-            fv.status as verification_status,
-            COUNT(*) as count
-        FROM findings fn
-        JOIN file_analyses fa ON fa.id = fn.file_analysis_id
-        LEFT JOIN finding_verifications fv ON fv.finding_id = fn.id
-        WHERE fa.run_id = ?
-        GROUP BY fn.severity, fv.status
-        """,
-        (run_id,),
-    )
-
-    result: dict[str, dict[str, int]] = {}
-    for sev in ["critical", "high", "medium", "low"]:
-        result[sev] = {"valid": 0, "invalid": 0, "uncertain": 0, "pending": 0, "total": 0}
-
-    for row in cursor.fetchall():
-        sev = row[0] or "low"
-        status = row[1]  # None if not verified
-        count = row[2]
-
-        if sev not in result:
-            result[sev] = {"valid": 0, "invalid": 0, "uncertain": 0, "pending": 0, "total": 0}
-
-        result[sev]["total"] += count
-        if status is None:
-            result[sev]["pending"] += count
-        elif status in result[sev]:
-            result[sev][status] += count
-
-    return result
-
-
-def get_example_findings(
-    conn: sqlite3.Connection,
-    run_id: int,
-    limit_per_category: int = 3,
-    *,
-    verified_only: bool = False,
-) -> dict[str, list[dict[str, Any]]]:
-    """Get example findings grouped by category.
-
-    Args:
-        conn: Database connection.
-        run_id: Analysis run ID.
-        limit_per_category: Max findings per category.
-        verified_only: If True, only include findings with completed verification.
-
-    Returns:
-        Dict mapping category to list of finding dicts.
-    """
-    verification_join = (
-        "INNER JOIN finding_verifications fv ON fv.finding_id = fn.id AND fv.status != 'error'"
-        if verified_only
-        else ""
-    )
-
-    cursor = conn.execute(
-        f"""
-        SELECT DISTINCT fn.category
-        FROM findings fn
-        JOIN file_analyses fa ON fa.id = fn.file_analysis_id
-        {verification_join}
-        WHERE fa.run_id = ?
-        ORDER BY fn.category
-        """,
-        (run_id,),
-    )
-    categories = [row[0] for row in cursor.fetchall()]
-
-    examples: dict[str, list[dict[str, Any]]] = {}
-    for category in categories:
-        cursor = conn.execute(
-            f"""
-            SELECT
-                fn.id,
-                fn.pattern_id,
-                fn.severity,
-                fn.confidence,
-                fn.issue,
-                fn.explanation,
-                fn.suggestion,
-                fn.snippet,
-                fn.lines,
-                fn.location_name,
-                fn.location_type,
-                fn.focus_line,
-                f.file_path,
-                f.original_path,
-                r.repo_name,
-                r.repo_url,
-                r.domain,
-                p.title as paper_title,
-                p.arxiv_id,
-                p.authors as paper_authors
-            FROM findings fn
-            JOIN file_analyses fa ON fa.id = fn.file_analysis_id
-            JOIN files f ON f.id = fa.file_id
-            JOIN repos r ON r.id = f.repo_id
-            LEFT JOIN papers p ON p.id = r.paper_id
-            {verification_join}
-            WHERE fa.run_id = ? AND fn.category = ?
-            ORDER BY fn.confidence DESC
-            LIMIT ?
-            """,
-            (run_id, category, limit_per_category),
-        )
-        examples[category] = [
-            {
-                "finding_id": row[0],
-                "pattern_id": row[1],
-                "severity": row[2],
-                "confidence": row[3],
-                "issue": row[4],
-                "explanation": row[5],
-                "suggestion": row[6],
-                "snippet": row[7],
-                "lines": row[8],
-                "location_name": row[9],
-                "location_type": row[10],
-                "focus_line": row[11],
-                "file_path": row[12],
-                "original_path": row[13],
-                "repo_name": row[14],
-                "repo_url": row[15],
-                "domain": row[16],
-                "paper_title": row[17],
-                "arxiv_id": row[18],
-                "paper_authors": row[19],
-            }
-            for row in cursor.fetchall()
-        ]
-
-    return examples
-
-
-def get_top_patterns(
-    conn: sqlite3.Connection, run_id: int, limit: int = 10, *, verified_only: bool = False
-) -> list[dict[str, Any]]:
-    """Get most frequent patterns.
-
-    Args:
-        conn: Database connection.
-        run_id: Analysis run ID.
-        limit: Max patterns to return.
-        verified_only: If True, only include findings with completed verification.
-
-    Returns:
-        List of pattern stats dicts.
-    """
-    verification_join = (
-        "INNER JOIN finding_verifications fv ON fv.finding_id = fn.id AND fv.status != 'error'"
-        if verified_only
-        else ""
-    )
-
-    cursor = conn.execute(
-        f"""
-        SELECT
-            fn.pattern_id,
-            fn.category,
-            COUNT(*) as count,
-            COUNT(DISTINCT fa.file_id) as unique_files,
-            COUNT(DISTINCT f.repo_id) as unique_repos,
-            AVG(fn.confidence) as avg_confidence
-        FROM findings fn
-        JOIN file_analyses fa ON fa.id = fn.file_analysis_id
-        JOIN files f ON f.id = fa.file_id
-        {verification_join}
-        WHERE fa.run_id = ?
-        GROUP BY fn.pattern_id
-        ORDER BY count DESC
-        LIMIT ?
-        """,
-        (run_id, limit),
-    )
-    return [
-        {
-            "pattern_id": row[0],
-            "category": row[1],
-            "count": row[2],
-            "unique_files": row[3],
-            "unique_repos": row[4],
-            "avg_confidence": row[5],
-        }
-        for row in cursor.fetchall()
-    ]
+# Re-export for backward compatibility (tests import from this module)
+__all__ = ["generate_markdown_report", "get_example_findings", "main", "save_report"]
 
 
 def generate_markdown_report(
@@ -381,7 +64,7 @@ def generate_markdown_report(
     scan_stats = get_scan_stats(conn)
     prefilter_summary = get_prefilter_summary(conn, run_id)
 
-    lines = []
+    lines: list[str] = []
 
     # Header with data source-specific description
     title = "# Real-World Scientific ML Code Analysis Report"
@@ -437,149 +120,19 @@ def generate_markdown_report(
     if stats.data_source == "leakage_paper":
         gt_results, gt_excluded = compare_ground_truth(run_id)
         if gt_results:
-            # Aggregate headline stats across all labels
-            total_tp = sum(r.true_positives for r in gt_results)
-            total_fp = sum(r.false_positives for r in gt_results)
-            total_fn = sum(r.false_negatives for r in gt_results)
-            total_tn = sum(r.true_negatives for r in gt_results)
-            agg_prec = total_tp / (total_tp + total_fp) if (total_tp + total_fp) > 0 else 0.0
-            agg_rec = total_tp / (total_tp + total_fn) if (total_tp + total_fn) > 0 else 0.0
-            agg_f1 = (
-                2 * agg_prec * agg_rec / (agg_prec + agg_rec) if (agg_prec + agg_rec) > 0 else 0.0
-            )
-            total_evaluated = total_tp + total_fp + total_fn + total_tn
-            agg_acc = (total_tp + total_tn) / total_evaluated if total_evaluated > 0 else 0.0
-            lines.append(
-                f"- **Ground Truth (aggregate):** "
-                f"Precision {agg_prec:.0%}, Recall {agg_rec:.0%}, "
-                f"F1 {agg_f1:.0%}, Accuracy {agg_acc:.0%}"
-            )
-            if gt_excluded > 0:
-                lines.append(f"- **Excluded:** {gt_excluded} notebooks (pattern timeouts)")
+            _append_ground_truth_summary(lines, gt_results, gt_excluded)
     lines.append("")
 
     if gt_results:
-        lines.append("## Ground Truth Comparison")
-        lines.append("")
-        lines.append(
-            "Comparison against Yang et al. ASE'22 manual labels "
-            "(notebooks with pattern timeouts are excluded)."
-        )
-        if gt_excluded > 0:
-            lines.append(f" Excluded: {gt_excluded} notebooks due to timeouts.")
-        lines.append("")
-
-        lines.append("| Label | TP | FP | FN | TN | Precision | Recall | F1 |")
-        lines.append("|-------|---:|---:|---:|---:|----------:|-------:|---:|")
-        for r in gt_results:
-            lines.append(
-                f"| {r.label} | {r.true_positives} | {r.false_positives} | "
-                f"{r.false_negatives} | {r.true_negatives} | "
-                f"{r.precision:.1%} | {r.recall:.1%} | {r.f1:.1%} |"
-            )
-        lines.append("")
-
-        lines.append("| Label | Correct | Total | Accuracy |")
-        lines.append("|-------|--------:|------:|---------:|")
-        for r in gt_results:
-            total = r.true_positives + r.false_positives + r.false_negatives + r.true_negatives
-            if total > 0:
-                correct = r.true_positives + r.true_negatives
-                lines.append(f"| {r.label} | {correct} | {total} | {correct / total:.1%} |")
-        lines.append("")
+        _append_ground_truth_table(lines, gt_results, gt_excluded)
 
     # File filtering pipeline stats (if scans were performed)
     if scan_stats.total_scans > 0:
-        lines.append("## File Filtering Pipeline")
-        lines.append("")
-        lines.append("Two stages: ML import presence check → LLM classification:")
-        lines.append("")
-        has_ml_imports = scan_stats.total_self_contained + scan_stats.total_fragments
-        no_ml_imports = scan_stats.total_skipped
-        lines.append("```")
-        lines.append(f"Total Python files:       {scan_stats.total_files_scanned:,}")
-        lines.append("  │")
-        lines.append(f"  ├─ Has ML imports:      {has_ml_imports:,}  (sent to LLM)")
-        lines.append("  │    │")
-        lines.append(f"  │    ├─ Self-contained: {scan_stats.total_self_contained:,}  ← analyzed")
-        lines.append(f"  │    └─ Fragments:      {scan_stats.total_fragments:,}  ← skipped")
-        lines.append("  │")
-        lines.append(f"  └─ No ML imports:       {no_ml_imports:,}  ← skipped")
-        lines.append("```")
-        lines.append("")
-        if scan_stats.total_files_scanned > 0:
-            filter_rate = 100 * scan_stats.total_self_contained / scan_stats.total_files_scanned
-            lines.append(
-                f"*{filter_rate:.1f}% of files passed both filters and were analyzed. "
-                f"Avg {scan_stats.avg_self_contained_per_repo:.1f} self-contained files per repo.*"
-            )
-            lines.append("")
+        _append_file_filtering_pipeline(lines, scan_stats)
 
     # Prefilter summary (if prefilter was used)
     if prefilter_summary:
-        lines.append("## Prefilter Summary")
-        lines.append("")
-        lines.append(
-            "Files were classified by LLM as self-contained ML pipelines vs code fragments. "
-            "Only self-contained files (complete training/inference workflows) were analyzed."
-        )
-        lines.append("")
-
-        # File classification breakdown
-        total = prefilter_summary["total_files"]
-        self_contained = prefilter_summary["self_contained"]
-        fragments = prefilter_summary["fragments"]
-        uncertain = prefilter_summary["uncertain"]
-        errors = prefilter_summary["errors"]
-
-        lines.append("| Classification | Files | % |")
-        lines.append("|----------------|-------|---|")
-        lines.append(
-            f"| Self-contained (analyzed) | {self_contained:,} | "
-            f"{100 * self_contained / total:.1f}% |"
-        )
-        lines.append(f"| Fragment (skipped) | {fragments:,} | {100 * fragments / total:.1f}% |")
-        if uncertain > 0:
-            lines.append(f"| Uncertain | {uncertain:,} | {100 * uncertain / total:.1f}% |")
-        if errors > 0:
-            lines.append(f"| Error | {errors:,} | {100 * errors / total:.1f}% |")
-        lines.append(f"| **Total** | **{total:,}** | |")
-        lines.append("")
-
-        # Paper/repo impact
-        orig_papers = prefilter_summary["original_papers"]
-        filt_papers = prefilter_summary["filtered_papers"]
-        orig_repos = prefilter_summary["original_repos"]
-        filt_repos = prefilter_summary["filtered_repos"]
-        dropped_repos = prefilter_summary["dropped_repos"]
-
-        if orig_papers > filt_papers:
-            lines.append("### Papers/Repos Filtered")
-            lines.append("")
-            lines.append(
-                f"- **Papers:** {filt_papers} analyzed / {orig_papers} original "
-                f"({orig_papers - filt_papers} dropped)"
-            )
-            lines.append(
-                f"- **Repos:** {filt_repos} analyzed / {orig_repos} original "
-                f"({orig_repos - filt_repos} dropped)"
-            )
-            lines.append("")
-
-            if dropped_repos:
-                lines.append(
-                    f"**{len(dropped_repos)} repos dropped** (all files classified as fragments):"
-                )
-                lines.append("")
-                for repo in dropped_repos[:10]:  # Limit to 10
-                    lines.append(f"- `{repo}`")
-                if len(dropped_repos) > 10:
-                    lines.append(f"- ... and {len(dropped_repos) - 10} more")
-                lines.append("")
-
-        if prefilter_summary["model_name"]:
-            lines.append(f"*Prefilter model: {prefilter_summary['model_name']}*")
-            lines.append("")
+        _append_prefilter_summary(lines, prefilter_summary)
 
     # Papers by severity (skip for leakage_paper - single source)
     show_papers_by_severity = (
@@ -588,23 +141,7 @@ def generate_markdown_report(
         and any(papers_by_severity.values())
     )
     if show_papers_by_severity:
-        lines.append("## Papers by Severity")
-        lines.append("")
-        lines.append(
-            "Papers with at least one finding of each severity level "
-            "(a paper may appear in multiple rows):"
-        )
-        lines.append("")
-        lines.append("| Severity | Papers | % of Papers Analyzed |")
-        lines.append("|----------|--------|----------------------|")
-        for sev in ["critical", "high", "medium", "low"]:
-            count = papers_by_severity.get(sev, 0)
-            if count > 0:
-                pct = 100 * count / stats.total_papers if stats.total_papers > 0 else 0
-                lines.append(f"| {sev.capitalize()} | {count:,} | {pct:.1f}% |")
-        lines.append("")
-        lines.append(f"*Total papers analyzed: {stats.total_papers:,}*")
-        lines.append("")
+        _append_papers_by_severity(lines, papers_by_severity, stats.total_papers)
 
     # Findings distribution per paper (skip for leakage_paper - single source)
     show_dist = (
@@ -613,265 +150,35 @@ def generate_markdown_report(
         and findings_distribution["per_paper"].count > 0
     )
     if show_dist:
-        lines.append("## Findings Distribution (per paper)")
-        lines.append("")
-        lines.append("| Metric | All | Critical | High | Medium | Low |")
-        lines.append("|--------|-----|----------|------|--------|-----|")
-
-        # Papers with findings row
-        dist = findings_distribution
-        papers_row = f"| Papers | {dist['per_paper'].count}"
-        for sev in ["critical", "high", "medium", "low"]:
-            papers_row += f" | {dist[sev].count}"
-        papers_row += " |"
-        lines.append(papers_row)
-
-        # Min row
-        min_row = f"| Min | {dist['per_paper'].min}"
-        for sev in ["critical", "high", "medium", "low"]:
-            min_row += f" | {dist[sev].min}" if dist[sev].count > 0 else " | -"
-        min_row += " |"
-        lines.append(min_row)
-
-        # Max row
-        max_row = f"| Max | {dist['per_paper'].max}"
-        for sev in ["critical", "high", "medium", "low"]:
-            max_row += f" | {dist[sev].max}" if dist[sev].count > 0 else " | -"
-        max_row += " |"
-        lines.append(max_row)
-
-        # Mean row
-        mean_row = f"| Mean | {dist['per_paper'].mean:.1f}"
-        for sev in ["critical", "high", "medium", "low"]:
-            mean_row += f" | {dist[sev].mean:.1f}" if dist[sev].count > 0 else " | -"
-        mean_row += " |"
-        lines.append(mean_row)
-
-        # Median row
-        median_row = f"| Median | {dist['per_paper'].median:.1f}"
-        for sev in ["critical", "high", "medium", "low"]:
-            median_row += f" | {dist[sev].median:.1f}" if dist[sev].count > 0 else " | -"
-        median_row += " |"
-        lines.append(median_row)
-
-        # Std dev row
-        std_row = f"| Std Dev | {dist['per_paper'].stdev:.1f}"
-        for sev in ["critical", "high", "medium", "low"]:
-            std_row += f" | {dist[sev].stdev:.1f}" if dist[sev].count > 1 else " | -"
-        std_row += " |"
-        lines.append(std_row)
-
-        lines.append("")
+        _append_findings_distribution(lines, findings_distribution)
 
     # Verification summary (if any verifications exist)
     total_verified = verification_stats.get("total_verified", 0)
     total_pending = sum(v["pending"] for v in verification_by_severity.values())
-
     if total_verified > 0 or total_pending > 0:
-        lines.append("## Verification Summary")
-        lines.append("")
-
-        if total_verified > 0:
-            valid = verification_stats.get("valid", 0)
-            invalid = verification_stats.get("invalid", 0)
-            uncertain = verification_stats.get("uncertain", 0)
-            precision = verification_stats.get("precision", 0)
-            prec_str = f"{precision:.1f}% ({valid:,} valid / {total_verified:,} verified)"
-            lines.append(f"**Overall Precision:** {prec_str}")
-            lines.append("")
-            lines.append("| Status | Count | % |")
-            lines.append("|--------|-------|---|")
-            valid_pct = 100 * valid / total_verified
-            invalid_pct = 100 * invalid / total_verified
-            uncertain_pct = 100 * uncertain / total_verified
-            lines.append(f"| Valid (confirmed) | {valid:,} | {valid_pct:.1f}% |")
-            lines.append(f"| Invalid (false positive) | {invalid:,} | {invalid_pct:.1f}% |")
-            lines.append(f"| Uncertain | {uncertain:,} | {uncertain_pct:.1f}% |")
-            if total_pending > 0:
-                lines.append(f"| Pending verification | {total_pending:,} | - |")
-            lines.append("")
-
-        elif total_pending > 0:
-            lines.append(f"**{total_pending:,} findings pending verification.**")
-            lines.append("")
-
-        # Verification by severity table
-        if total_verified > 0:
-            lines.append("### Verified Findings by Severity")
-            lines.append("")
-            lines.append("| Severity | Total | Valid | Invalid | Uncertain | Pending | Precision |")
-            lines.append("|----------|-------|-------|---------|-----------|---------|-----------|")
-            for sev in ["critical", "high", "medium", "low"]:
-                v = verification_by_severity.get(sev, {})
-                total = v.get("total", 0)
-                if total == 0:
-                    continue
-                valid = v.get("valid", 0)
-                invalid = v.get("invalid", 0)
-                uncertain = v.get("uncertain", 0)
-                pending = v.get("pending", 0)
-                verified = valid + invalid + uncertain
-                prec = f"{100 * valid / verified:.0f}%" if verified > 0 else "-"
-                sev_cap = sev.capitalize()
-                row = f"| {sev_cap} | {total:,} | {valid:,} | {invalid:,} "
-                row += f"| {uncertain:,} | {pending:,} | {prec} |"
-                lines.append(row)
-            lines.append("")
+        _append_verification_summary(
+            lines, verification_stats, verification_by_severity, total_verified, total_pending
+        )
 
     # Findings by domain (skip for leakage_paper - all data_science)
     if stats.data_source != "leakage_paper" and stats.by_domain:
-        lines.append("## Findings by Scientific Domain")
-        lines.append("")
-        lines.append("| Domain | Files Analyzed | With Findings | Finding Rate | Total Findings |")
-        lines.append("|--------|---------------|---------------|--------------|----------------|")
-        for d in sorted(stats.by_domain, key=lambda x: x.total_findings, reverse=True):
-            lines.append(
-                f"| {d.domain} | {d.analyzed_files:,} | {d.files_with_findings:,} | "
-                f"{d.finding_rate:.1f}% | {d.total_findings:,} |"
-            )
-        lines.append("")
+        _append_findings_by_domain(lines, stats.by_domain)
 
     # Findings by category
     if stats.by_category:
-        lines.append("## Findings by Category")
-        lines.append("")
-        # Skip Unique Repos for leakage_paper (always 1)
-        if stats.data_source == "leakage_paper":
-            lines.append("| Category | Count | Unique Files |")
-            lines.append("|----------|-------|--------------|")
-            for c in stats.by_category:
-                row = f"| {c.category} | {c.count:,} | {c.unique_files:,} |"
-                lines.append(row)
-        else:
-            lines.append("| Category | Count | Unique Files | Unique Repos |")
-            lines.append("|----------|-------|--------------|--------------|")
-            for c in stats.by_category:
-                row = f"| {c.category} | {c.count:,} | {c.unique_files:,} | {c.unique_repos:,} |"
-                lines.append(row)
-        lines.append("")
+        _append_findings_by_category(lines, stats.by_category, stats.data_source)
 
     # Findings by severity (as table with percentages)
     if stats.by_severity:
-        lines.append("## Findings by Severity")
-        lines.append("")
-        lines.append("| Severity | Count | % of Total |")
-        lines.append("|----------|-------|------------|")
-        total = stats.total_findings
-        for sev in ["critical", "high", "medium", "low"]:
-            if sev in stats.by_severity:
-                count = stats.by_severity[sev]
-                pct = 100 * count / total if total > 0 else 0
-                lines.append(f"| {sev.capitalize()} | {count:,} | {pct:.1f}% |")
-        lines.append("")
+        _append_findings_by_severity(lines, stats.by_severity, stats.total_findings)
 
     # Top patterns
     if top_patterns:
-        lines.append("## Most Common Patterns")
-        lines.append("")
-        # Simplified columns for leakage_paper (no repos/confidence)
-        if stats.data_source == "leakage_paper":
-            lines.append("| Pattern | Category | Count | Files |")
-            lines.append("|---------|----------|-------|-------|")
-            for p in top_patterns:
-                lines.append(
-                    f"| {p['pattern_id']} | {p['category']} | "
-                    f"{p['count']:,} | {p['unique_files']:,} |"
-                )
-        else:
-            lines.append("| Pattern | Category | Count | Files | Repos | Avg Confidence |")
-            lines.append("|---------|----------|-------|-------|-------|----------------|")
-            for p in top_patterns:
-                conf = p["avg_confidence"] or 0
-                lines.append(
-                    f"| {p['pattern_id']} | {p['category']} | {p['count']:,} | "
-                    f"{p['unique_files']:,} | {p['unique_repos']:,} | {conf:.0%} |"
-                )
-        lines.append("")
+        _append_top_patterns(lines, top_patterns, stats.data_source)
 
     # Example findings
     if examples:
-        lines.append("## Example Findings")
-        lines.append("")
-        lines.append("Representative findings from each category (with links to source):")
-        lines.append("")
-
-        for category, findings in examples.items():
-            if not findings:
-                continue
-
-            lines.append(f"### {category}")
-            lines.append("")
-
-            for f in findings:
-                conf = f["confidence"]
-                header = f"**{f['pattern_id']}** ({f['severity']}, {conf:.0%} confidence)"
-                lines.append(header)
-                lines.append("")
-
-                # Build GitHub link to file with line numbers
-                repo_url = f["repo_url"] or ""
-                original_path = f["original_path"] or ""
-                finding_lines = f["lines"] or "[]"
-
-                if repo_url and original_path:
-                    # Parse line numbers from JSON string
-                    try:
-                        line_nums = json.loads(finding_lines) if finding_lines else []
-                    except (json.JSONDecodeError, TypeError):
-                        line_nums = []
-
-                    # Build GitHub blob URL
-                    github_url = f"{repo_url}/blob/main/{original_path}"
-                    if line_nums:
-                        if len(line_nums) == 1:
-                            github_url += f"#L{line_nums[0]}"
-                        else:
-                            github_url += f"#L{min(line_nums)}-L{max(line_nums)}"
-
-                    file_link = f"[{original_path}]({github_url})"
-                    lines.append(f"- **File:** {file_link} in [{f['repo_name']}]({repo_url})")
-                else:
-                    lines.append(f"- **Repo:** {f['repo_name']} ({f['domain']})")
-
-                # Add function/class location if available
-                if f.get("location_name"):
-                    loc_type = f.get("location_type") or "function"
-                    loc_info = f"- **Location:** {loc_type} `{f['location_name']}`"
-                    if f.get("focus_line"):
-                        loc_info += f" (line {f['focus_line']})"
-                    lines.append(loc_info)
-
-                if f["paper_title"]:
-                    paper_ref = f["paper_title"]
-                    if f["arxiv_id"]:
-                        paper_ref += (
-                            f" ([arXiv:{f['arxiv_id']}](https://arxiv.org/abs/{f['arxiv_id']}))"
-                        )
-                    lines.append(f"- **Paper:** {paper_ref}")
-
-                    # Add authors if available
-                    if f.get("paper_authors"):
-                        try:
-                            authors = json.loads(f["paper_authors"])
-                            if authors:
-                                if len(authors) > 2:
-                                    authors_str = f"{authors[0]} et al."
-                                else:
-                                    authors_str = ", ".join(authors)
-                                lines.append(f"- **Authors:** {authors_str}")
-                        except (json.JSONDecodeError, TypeError):
-                            pass
-                lines.append(f"- **Issue:** {f['issue']}")
-                if f["explanation"]:
-                    lines.append(f"- **Explanation:** {f['explanation']}")
-                if f["suggestion"]:
-                    lines.append(f"- **Suggestion:** {f['suggestion']}")
-                if f["snippet"]:
-                    lines.append("")
-                    lines.append("```python")
-                    lines.append(f["snippet"].strip())
-                    lines.append("```")
-                lines.append("")
+        _append_example_findings(lines, examples)
 
     # Footer
     lines.append("---")
@@ -882,6 +189,452 @@ def generate_markdown_report(
     lines.append("")
 
     return "\n".join(lines)
+
+
+def _append_ground_truth_summary(lines: list[str], gt_results: list[Any], gt_excluded: int) -> None:
+    """Append aggregate ground truth metrics to the summary section."""
+    total_tp = sum(r.true_positives for r in gt_results)
+    total_fp = sum(r.false_positives for r in gt_results)
+    total_fn = sum(r.false_negatives for r in gt_results)
+    total_tn = sum(r.true_negatives for r in gt_results)
+    agg_prec = total_tp / (total_tp + total_fp) if (total_tp + total_fp) > 0 else 0.0
+    agg_rec = total_tp / (total_tp + total_fn) if (total_tp + total_fn) > 0 else 0.0
+    agg_f1 = 2 * agg_prec * agg_rec / (agg_prec + agg_rec) if (agg_prec + agg_rec) > 0 else 0.0
+    total_evaluated = total_tp + total_fp + total_fn + total_tn
+    agg_acc = (total_tp + total_tn) / total_evaluated if total_evaluated > 0 else 0.0
+    lines.append(
+        f"- **Ground Truth (aggregate):** "
+        f"Precision {agg_prec:.0%}, Recall {agg_rec:.0%}, "
+        f"F1 {agg_f1:.0%}, Accuracy {agg_acc:.0%}"
+    )
+    if gt_excluded > 0:
+        lines.append(f"- **Excluded:** {gt_excluded} notebooks (pattern timeouts)")
+
+
+def _append_ground_truth_table(lines: list[str], gt_results: list[Any], gt_excluded: int) -> None:
+    """Append detailed ground truth comparison tables."""
+    lines.append("## Ground Truth Comparison")
+    lines.append("")
+    lines.append(
+        "Comparison against Yang et al. ASE'22 manual labels "
+        "(notebooks with pattern timeouts are excluded)."
+    )
+    if gt_excluded > 0:
+        lines.append(f" Excluded: {gt_excluded} notebooks due to timeouts.")
+    lines.append("")
+
+    lines.append("| Label | TP | FP | FN | TN | Precision | Recall | F1 |")
+    lines.append("|-------|---:|---:|---:|---:|----------:|-------:|---:|")
+    for r in gt_results:
+        lines.append(
+            f"| {r.label} | {r.true_positives} | {r.false_positives} | "
+            f"{r.false_negatives} | {r.true_negatives} | "
+            f"{r.precision:.1%} | {r.recall:.1%} | {r.f1:.1%} |"
+        )
+    lines.append("")
+
+    lines.append("| Label | Correct | Total | Accuracy |")
+    lines.append("|-------|--------:|------:|---------:|")
+    for r in gt_results:
+        total = r.true_positives + r.false_positives + r.false_negatives + r.true_negatives
+        if total > 0:
+            correct = r.true_positives + r.true_negatives
+            lines.append(f"| {r.label} | {correct} | {total} | {correct / total:.1%} |")
+    lines.append("")
+
+
+def _append_file_filtering_pipeline(lines: list[str], scan_stats: Any) -> None:
+    """Append file filtering pipeline stats."""
+    lines.append("## File Filtering Pipeline")
+    lines.append("")
+    lines.append("Two stages: ML import presence check -> LLM classification:")
+    lines.append("")
+    has_ml_imports = scan_stats.total_self_contained + scan_stats.total_fragments
+    no_ml_imports = scan_stats.total_skipped
+    lines.append("```")
+    lines.append(f"Total Python files:       {scan_stats.total_files_scanned:,}")
+    lines.append("  |")
+    lines.append(f"  |- Has ML imports:      {has_ml_imports:,}  (sent to LLM)")
+    lines.append("  |    |")
+    lines.append(f"  |    |- Self-contained: {scan_stats.total_self_contained:,}  <- analyzed")
+    lines.append(f"  |    |- Fragments:      {scan_stats.total_fragments:,}  <- skipped")
+    lines.append("  |")
+    lines.append(f"  |- No ML imports:       {no_ml_imports:,}  <- skipped")
+    lines.append("```")
+    lines.append("")
+    if scan_stats.total_files_scanned > 0:
+        filter_rate = 100 * scan_stats.total_self_contained / scan_stats.total_files_scanned
+        lines.append(
+            f"*{filter_rate:.1f}% of files passed both filters and were analyzed. "
+            f"Avg {scan_stats.avg_self_contained_per_repo:.1f} self-contained files per repo.*"
+        )
+        lines.append("")
+
+
+def _append_prefilter_summary(lines: list[str], prefilter_summary: dict[str, Any]) -> None:
+    """Append prefilter classification summary."""
+    lines.append("## Prefilter Summary")
+    lines.append("")
+    lines.append(
+        "Files were classified by LLM as self-contained ML pipelines vs code fragments. "
+        "Only self-contained files (complete training/inference workflows) were analyzed."
+    )
+    lines.append("")
+
+    # File classification breakdown
+    total = prefilter_summary["total_files"]
+    self_contained = prefilter_summary["self_contained"]
+    fragments = prefilter_summary["fragments"]
+    uncertain = prefilter_summary["uncertain"]
+    errors = prefilter_summary["errors"]
+
+    lines.append("| Classification | Files | % |")
+    lines.append("|----------------|-------|---|")
+    lines.append(
+        f"| Self-contained (analyzed) | {self_contained:,} | {100 * self_contained / total:.1f}% |"
+    )
+    lines.append(f"| Fragment (skipped) | {fragments:,} | {100 * fragments / total:.1f}% |")
+    if uncertain > 0:
+        lines.append(f"| Uncertain | {uncertain:,} | {100 * uncertain / total:.1f}% |")
+    if errors > 0:
+        lines.append(f"| Error | {errors:,} | {100 * errors / total:.1f}% |")
+    lines.append(f"| **Total** | **{total:,}** | |")
+    lines.append("")
+
+    # Paper/repo impact
+    orig_papers = prefilter_summary["original_papers"]
+    filt_papers = prefilter_summary["filtered_papers"]
+    orig_repos = prefilter_summary["original_repos"]
+    filt_repos = prefilter_summary["filtered_repos"]
+    dropped_repos = prefilter_summary["dropped_repos"]
+
+    if orig_papers > filt_papers:
+        lines.append("### Papers/Repos Filtered")
+        lines.append("")
+        lines.append(
+            f"- **Papers:** {filt_papers} analyzed / {orig_papers} original "
+            f"({orig_papers - filt_papers} dropped)"
+        )
+        lines.append(
+            f"- **Repos:** {filt_repos} analyzed / {orig_repos} original "
+            f"({orig_repos - filt_repos} dropped)"
+        )
+        lines.append("")
+
+        if dropped_repos:
+            lines.append(
+                f"**{len(dropped_repos)} repos dropped** (all files classified as fragments):"
+            )
+            lines.append("")
+            for repo in dropped_repos[:10]:  # Limit to 10
+                lines.append(f"- `{repo}`")
+            if len(dropped_repos) > 10:
+                lines.append(f"- ... and {len(dropped_repos) - 10} more")
+            lines.append("")
+
+    if prefilter_summary["model_name"]:
+        lines.append(f"*Prefilter model: {prefilter_summary['model_name']}*")
+        lines.append("")
+
+
+def _append_papers_by_severity(
+    lines: list[str], papers_by_severity: dict[str, int], total_papers: int
+) -> None:
+    """Append papers-by-severity table."""
+    lines.append("## Papers by Severity")
+    lines.append("")
+    lines.append(
+        "Papers with at least one finding of each severity level "
+        "(a paper may appear in multiple rows):"
+    )
+    lines.append("")
+    lines.append("| Severity | Papers | % of Papers Analyzed |")
+    lines.append("|----------|--------|----------------------|")
+    for sev in ["critical", "high", "medium", "low"]:
+        count = papers_by_severity.get(sev, 0)
+        if count > 0:
+            pct = 100 * count / total_papers if total_papers > 0 else 0
+            lines.append(f"| {sev.capitalize()} | {count:,} | {pct:.1f}% |")
+    lines.append("")
+    lines.append(f"*Total papers analyzed: {total_papers:,}*")
+    lines.append("")
+
+
+def _append_findings_distribution(lines: list[str], findings_distribution: dict[str, Any]) -> None:
+    """Append findings-distribution-per-paper table."""
+    lines.append("## Findings Distribution (per paper)")
+    lines.append("")
+    lines.append("| Metric | All | Critical | High | Medium | Low |")
+    lines.append("|--------|-----|----------|------|--------|-----|")
+
+    dist = findings_distribution
+
+    # Papers with findings row
+    papers_row = f"| Papers | {dist['per_paper'].count}"
+    for sev in ["critical", "high", "medium", "low"]:
+        papers_row += f" | {dist[sev].count}"
+    papers_row += " |"
+    lines.append(papers_row)
+
+    # Min row
+    min_row = f"| Min | {dist['per_paper'].min}"
+    for sev in ["critical", "high", "medium", "low"]:
+        min_row += f" | {dist[sev].min}" if dist[sev].count > 0 else " | -"
+    min_row += " |"
+    lines.append(min_row)
+
+    # Max row
+    max_row = f"| Max | {dist['per_paper'].max}"
+    for sev in ["critical", "high", "medium", "low"]:
+        max_row += f" | {dist[sev].max}" if dist[sev].count > 0 else " | -"
+    max_row += " |"
+    lines.append(max_row)
+
+    # Mean row
+    mean_row = f"| Mean | {dist['per_paper'].mean:.1f}"
+    for sev in ["critical", "high", "medium", "low"]:
+        mean_row += f" | {dist[sev].mean:.1f}" if dist[sev].count > 0 else " | -"
+    mean_row += " |"
+    lines.append(mean_row)
+
+    # Median row
+    median_row = f"| Median | {dist['per_paper'].median:.1f}"
+    for sev in ["critical", "high", "medium", "low"]:
+        median_row += f" | {dist[sev].median:.1f}" if dist[sev].count > 0 else " | -"
+    median_row += " |"
+    lines.append(median_row)
+
+    # Std dev row
+    std_row = f"| Std Dev | {dist['per_paper'].stdev:.1f}"
+    for sev in ["critical", "high", "medium", "low"]:
+        std_row += f" | {dist[sev].stdev:.1f}" if dist[sev].count > 1 else " | -"
+    std_row += " |"
+    lines.append(std_row)
+
+    lines.append("")
+
+
+def _append_verification_summary(
+    lines: list[str],
+    verification_stats: dict[str, Any],
+    verification_by_severity: dict[str, dict[str, int]],
+    total_verified: int,
+    total_pending: int,
+) -> None:
+    """Append verification summary section."""
+    lines.append("## Verification Summary")
+    lines.append("")
+
+    if total_verified > 0:
+        valid = verification_stats.get("valid", 0)
+        invalid = verification_stats.get("invalid", 0)
+        uncertain = verification_stats.get("uncertain", 0)
+        precision = verification_stats.get("precision", 0)
+        prec_str = f"{precision:.1f}% ({valid:,} valid / {total_verified:,} verified)"
+        lines.append(f"**Overall Precision:** {prec_str}")
+        lines.append("")
+        lines.append("| Status | Count | % |")
+        lines.append("|--------|-------|---|")
+        valid_pct = 100 * valid / total_verified
+        invalid_pct = 100 * invalid / total_verified
+        uncertain_pct = 100 * uncertain / total_verified
+        lines.append(f"| Valid (confirmed) | {valid:,} | {valid_pct:.1f}% |")
+        lines.append(f"| Invalid (false positive) | {invalid:,} | {invalid_pct:.1f}% |")
+        lines.append(f"| Uncertain | {uncertain:,} | {uncertain_pct:.1f}% |")
+        if total_pending > 0:
+            lines.append(f"| Pending verification | {total_pending:,} | - |")
+        lines.append("")
+
+    elif total_pending > 0:
+        lines.append(f"**{total_pending:,} findings pending verification.**")
+        lines.append("")
+
+    # Verification by severity table
+    if total_verified > 0:
+        lines.append("### Verified Findings by Severity")
+        lines.append("")
+        lines.append("| Severity | Total | Valid | Invalid | Uncertain | Pending | Precision |")
+        lines.append("|----------|-------|-------|---------|-----------|---------|-----------|")
+        for sev in ["critical", "high", "medium", "low"]:
+            v = verification_by_severity.get(sev, {})
+            total = v.get("total", 0)
+            if total == 0:
+                continue
+            valid = v.get("valid", 0)
+            invalid = v.get("invalid", 0)
+            uncertain = v.get("uncertain", 0)
+            pending = v.get("pending", 0)
+            verified = valid + invalid + uncertain
+            prec = f"{100 * valid / verified:.0f}%" if verified > 0 else "-"
+            sev_cap = sev.capitalize()
+            row = f"| {sev_cap} | {total:,} | {valid:,} | {invalid:,} "
+            row += f"| {uncertain:,} | {pending:,} | {prec} |"
+            lines.append(row)
+        lines.append("")
+
+
+def _append_findings_by_domain(lines: list[str], by_domain: list[Any]) -> None:
+    """Append findings-by-domain table."""
+    lines.append("## Findings by Scientific Domain")
+    lines.append("")
+    lines.append("| Domain | Files Analyzed | With Findings | Finding Rate | Total Findings |")
+    lines.append("|--------|---------------|---------------|--------------|----------------|")
+    for d in sorted(by_domain, key=lambda x: x.total_findings, reverse=True):
+        lines.append(
+            f"| {d.domain} | {d.analyzed_files:,} | {d.files_with_findings:,} | "
+            f"{d.finding_rate:.1f}% | {d.total_findings:,} |"
+        )
+    lines.append("")
+
+
+def _append_findings_by_category(
+    lines: list[str], by_category: list[Any], data_source: str
+) -> None:
+    """Append findings-by-category table."""
+    lines.append("## Findings by Category")
+    lines.append("")
+    # Skip Unique Repos for leakage_paper (always 1)
+    if data_source == "leakage_paper":
+        lines.append("| Category | Count | Unique Files |")
+        lines.append("|----------|-------|--------------|")
+        for c in by_category:
+            row = f"| {c.category} | {c.count:,} | {c.unique_files:,} |"
+            lines.append(row)
+    else:
+        lines.append("| Category | Count | Unique Files | Unique Repos |")
+        lines.append("|----------|-------|--------------|--------------|")
+        for c in by_category:
+            row = f"| {c.category} | {c.count:,} | {c.unique_files:,} | {c.unique_repos:,} |"
+            lines.append(row)
+    lines.append("")
+
+
+def _append_findings_by_severity(
+    lines: list[str], by_severity: dict[str, int], total_findings: int
+) -> None:
+    """Append findings-by-severity table."""
+    lines.append("## Findings by Severity")
+    lines.append("")
+    lines.append("| Severity | Count | % of Total |")
+    lines.append("|----------|-------|------------|")
+    for sev in ["critical", "high", "medium", "low"]:
+        if sev in by_severity:
+            count = by_severity[sev]
+            pct = 100 * count / total_findings if total_findings > 0 else 0
+            lines.append(f"| {sev.capitalize()} | {count:,} | {pct:.1f}% |")
+    lines.append("")
+
+
+def _append_top_patterns(
+    lines: list[str], top_patterns: list[dict[str, Any]], data_source: str
+) -> None:
+    """Append most-common-patterns table."""
+    lines.append("## Most Common Patterns")
+    lines.append("")
+    # Simplified columns for leakage_paper (no repos/confidence)
+    if data_source == "leakage_paper":
+        lines.append("| Pattern | Category | Count | Files |")
+        lines.append("|---------|----------|-------|-------|")
+        for p in top_patterns:
+            lines.append(
+                f"| {p['pattern_id']} | {p['category']} | {p['count']:,} | {p['unique_files']:,} |"
+            )
+    else:
+        lines.append("| Pattern | Category | Count | Files | Repos | Avg Confidence |")
+        lines.append("|---------|----------|-------|-------|-------|----------------|")
+        for p in top_patterns:
+            conf = p["avg_confidence"] or 0
+            lines.append(
+                f"| {p['pattern_id']} | {p['category']} | {p['count']:,} | "
+                f"{p['unique_files']:,} | {p['unique_repos']:,} | {conf:.0%} |"
+            )
+    lines.append("")
+
+
+def _append_example_findings(lines: list[str], examples: dict[str, list[dict[str, Any]]]) -> None:
+    """Append example findings section."""
+    lines.append("## Example Findings")
+    lines.append("")
+    lines.append("Representative findings from each category (with links to source):")
+    lines.append("")
+
+    for category, findings in examples.items():
+        if not findings:
+            continue
+
+        lines.append(f"### {category}")
+        lines.append("")
+
+        for f in findings:
+            conf = f["confidence"]
+            header = f"**{f['pattern_id']}** ({f['severity']}, {conf:.0%} confidence)"
+            lines.append(header)
+            lines.append("")
+
+            # Build GitHub link to file with line numbers
+            repo_url = f["repo_url"] or ""
+            original_path = f["original_path"] or ""
+            finding_lines = f["lines"] or "[]"
+
+            if repo_url and original_path:
+                # Parse line numbers from JSON string
+                try:
+                    line_nums = json.loads(finding_lines) if finding_lines else []
+                except (json.JSONDecodeError, TypeError):
+                    line_nums = []
+
+                # Build GitHub blob URL
+                github_url = f"{repo_url}/blob/main/{original_path}"
+                if line_nums:
+                    if len(line_nums) == 1:
+                        github_url += f"#L{line_nums[0]}"
+                    else:
+                        github_url += f"#L{min(line_nums)}-L{max(line_nums)}"
+
+                file_link = f"[{original_path}]({github_url})"
+                lines.append(f"- **File:** {file_link} in [{f['repo_name']}]({repo_url})")
+            else:
+                lines.append(f"- **Repo:** {f['repo_name']} ({f['domain']})")
+
+            # Add function/class location if available
+            if f.get("location_name"):
+                loc_type = f.get("location_type") or "function"
+                loc_info = f"- **Location:** {loc_type} `{f['location_name']}`"
+                if f.get("focus_line"):
+                    loc_info += f" (line {f['focus_line']})"
+                lines.append(loc_info)
+
+            if f["paper_title"]:
+                paper_ref = f["paper_title"]
+                if f["arxiv_id"]:
+                    paper_ref += (
+                        f" ([arXiv:{f['arxiv_id']}](https://arxiv.org/abs/{f['arxiv_id']}))"
+                    )
+                lines.append(f"- **Paper:** {paper_ref}")
+
+                # Add authors if available
+                if f.get("paper_authors"):
+                    try:
+                        authors = json.loads(f["paper_authors"])
+                        if authors:
+                            if len(authors) > 2:
+                                authors_str = f"{authors[0]} et al."
+                            else:
+                                authors_str = ", ".join(authors)
+                            lines.append(f"- **Authors:** {authors_str}")
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+            lines.append(f"- **Issue:** {f['issue']}")
+            if f["explanation"]:
+                lines.append(f"- **Explanation:** {f['explanation']}")
+            if f["suggestion"]:
+                lines.append(f"- **Suggestion:** {f['suggestion']}")
+            if f["snippet"]:
+                lines.append("")
+                lines.append("```python")
+                lines.append(f["snippet"].strip())
+                lines.append("```")
+            lines.append("")
 
 
 def save_report(
@@ -909,250 +662,6 @@ def save_report(
     output_path.parent.mkdir(exist_ok=True, parents=True)
     output_path.write_text(content)
     return output_path
-
-
-def _query_valid_findings(
-    conn: sqlite3.Connection, run_id: int, severity: str
-) -> list[dict[str, Any]]:
-    """Query valid findings for a given severity level.
-
-    Args:
-        conn: Database connection.
-        run_id: Analysis run ID.
-        severity: Severity level ('critical' or 'high').
-
-    Returns:
-        List of finding dicts ordered by confidence.
-    """
-    cursor = conn.execute(
-        """
-        SELECT
-            fn.id,
-            fn.pattern_id,
-            fn.severity,
-            fn.confidence,
-            fn.issue,
-            fn.explanation,
-            fn.suggestion,
-            fn.snippet,
-            fn.lines,
-            fn.location_name,
-            fn.location_type,
-            fn.focus_line,
-            f.file_path,
-            f.original_path,
-            r.repo_name,
-            r.repo_url,
-            r.domain,
-            r.paper_id,
-            p.title as paper_title,
-            p.arxiv_id,
-            p.authors as paper_authors,
-            fv.reasoning as verification_reasoning
-        FROM findings fn
-        JOIN file_analyses fa ON fa.id = fn.file_analysis_id
-        JOIN files f ON f.id = fa.file_id
-        JOIN repos r ON r.id = f.repo_id
-        LEFT JOIN papers p ON p.id = r.paper_id
-        INNER JOIN finding_verifications fv ON fv.finding_id = fn.id
-        WHERE fa.run_id = ?
-          AND fn.severity = ?
-          AND fv.status = 'valid'
-          AND r.paper_id IS NOT NULL
-        GROUP BY r.paper_id
-        ORDER BY fn.confidence DESC
-        """,
-        (run_id, severity),
-    )
-
-    return [
-        {
-            "finding_id": row[0],
-            "pattern_id": row[1],
-            "severity": row[2],
-            "confidence": row[3],
-            "issue": row[4],
-            "explanation": row[5],
-            "suggestion": row[6],
-            "snippet": row[7],
-            "lines": row[8],
-            "location_name": row[9],
-            "location_type": row[10],
-            "focus_line": row[11],
-            "file_path": row[12],
-            "original_path": row[13],
-            "repo_name": row[14],
-            "repo_url": row[15],
-            "domain": row[16],
-            "paper_id": row[17],
-            "paper_title": row[18],
-            "arxiv_id": row[19],
-            "paper_authors": row[20],
-            "verification_reasoning": row[21],
-        }
-        for row in cursor.fetchall()
-    ]
-
-
-def get_valid_critical_findings(
-    conn: sqlite3.Connection, run_id: int, limit: int = 10
-) -> list[dict[str, Any]]:
-    """Get valid findings with pattern diversity across severity levels.
-
-    Selection strategy for maximum diversity:
-    1. Critical findings: pick one per unique pattern
-    2. High findings: pick one per unique pattern (not already seen)
-    3. Fill remaining slots with duplicates by confidence
-
-    Args:
-        conn: Database connection.
-        run_id: Analysis run ID.
-        limit: Max findings to return.
-
-    Returns:
-        List of finding dicts with paper info.
-    """
-    selected: list[dict[str, Any]] = []
-    seen_patterns: set[str] = set()
-    remaining: list[dict[str, Any]] = []
-
-    # Process critical findings first, then high
-    for severity in ("critical", "high"):
-        findings = _query_valid_findings(conn, run_id, severity)
-
-        for f in findings:
-            if len(selected) >= limit:
-                break
-
-            pattern = f["pattern_id"]
-            if pattern not in seen_patterns:
-                selected.append(f)
-                seen_patterns.add(pattern)
-            else:
-                remaining.append(f)
-
-    # Fill remaining slots with duplicates (by confidence, critical first)
-    for f in remaining:
-        if len(selected) >= limit:
-            break
-        selected.append(f)
-
-    return selected
-
-
-def generate_valid_critical_report(conn: sqlite3.Connection, run_id: int) -> str:
-    """Generate markdown report of valid findings for quick verification.
-
-    Args:
-        conn: Database connection.
-        run_id: Analysis run ID.
-
-    Returns:
-        Markdown report string.
-    """
-    findings = get_valid_critical_findings(conn, run_id, limit=10)
-
-    # Count by severity
-    critical_count = sum(1 for f in findings if f["severity"] == "critical")
-    high_count = sum(1 for f in findings if f["severity"] == "high")
-
-    lines = []
-    lines.append("# Valid Findings - Quick Verification Sample")
-    lines.append("")
-
-    # Build summary with counts
-    counts = []
-    if critical_count:
-        counts.append(f"{critical_count} critical")
-    if high_count:
-        counts.append(f"{high_count} high")
-    count_str = " + ".join(counts) if counts else "0"
-
-    lines.append(
-        f"**{len(findings)} verified findings** ({count_str}) "
-        "with pattern diversity for fast manual verification."
-    )
-    lines.append("")
-
-    for i, f in enumerate(findings, 1):
-        lines.append(f"## {i}. {f['pattern_id']} ({f['severity']})")
-        lines.append("")
-
-        # Build GitHub link
-        repo_url = f["repo_url"] or ""
-        original_path = f["original_path"] or ""
-        finding_lines = f["lines"] or "[]"
-
-        if repo_url and original_path:
-            try:
-                line_nums = json.loads(finding_lines) if finding_lines else []
-            except (json.JSONDecodeError, TypeError):
-                line_nums = []
-
-            github_url = f"{repo_url}/blob/main/{original_path}"
-            if line_nums:
-                if len(line_nums) == 1:
-                    github_url += f"#L{line_nums[0]}"
-                else:
-                    github_url += f"#L{min(line_nums)}-L{max(line_nums)}"
-
-            lines.append(f"**File:** [{original_path}]({github_url})")
-        else:
-            lines.append(f"**File:** {f['original_path']}")
-
-        lines.append(f"**Repo:** [{f['repo_name']}]({repo_url})")
-
-        # Add function/class location if available
-        if f.get("location_name"):
-            loc_type = f.get("location_type") or "function"
-            loc_info = f"**Location:** {loc_type} `{f['location_name']}`"
-            if f.get("focus_line"):
-                loc_info += f" (line {f['focus_line']})"
-            lines.append(loc_info)
-
-        if f["paper_title"]:
-            paper_ref = f["paper_title"]
-            if f["arxiv_id"]:
-                paper_ref += f" ([arXiv:{f['arxiv_id']}](https://arxiv.org/abs/{f['arxiv_id']}))"
-            lines.append(f"**Paper:** {paper_ref}")
-
-            # Add authors if available
-            if f.get("paper_authors"):
-                try:
-                    authors = json.loads(f["paper_authors"])
-                    if authors:
-                        # Format: "First Author et al." for >2 authors, otherwise list all
-                        if len(authors) > 2:
-                            authors_str = f"{authors[0]} et al."
-                        else:
-                            authors_str = ", ".join(authors)
-                        lines.append(f"**Authors:** {authors_str}")
-                except (json.JSONDecodeError, TypeError):
-                    pass
-
-        lines.append("")
-        lines.append(f"**Issue:** {f['issue']}")
-        lines.append("")
-
-        if f["explanation"]:
-            lines.append(f"**Explanation:** {f['explanation']}")
-            lines.append("")
-
-        if f["snippet"]:
-            lines.append("**Code:**")
-            lines.append("```python")
-            lines.append(f["snippet"].strip())
-            lines.append("```")
-            lines.append("")
-
-        if f["verification_reasoning"]:
-            lines.append(f"**Verification reasoning:** {f['verification_reasoning']}")
-            lines.append("")
-
-        lines.append("---")
-        lines.append("")
-
-    return "\n".join(lines)
 
 
 def main() -> None:

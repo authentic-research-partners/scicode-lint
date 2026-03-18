@@ -1,5 +1,3 @@
-"""ML pipeline saving trained models without version metadata."""
-
 import pickle
 from pathlib import Path
 
@@ -8,7 +6,6 @@ from sklearn.preprocessing import StandardScaler
 
 
 def save_model_pickle(pipeline_dir: Path, X_train, y_train):
-    """Train and save pipeline components without version tracking."""
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X_train)
 

@@ -29,10 +29,20 @@ Does training code run after model.eval() without model.train() in between?
 
 WHY THIS MATTERS: model.eval() disables dropout and switches batch normalization to use running statistics. If you resume training without calling model.train(), dropout won't drop units and batch norm uses wrong statistics, causing the model to learn incorrectly and perform poorly.
 
-Check for: model.eval() ... loss.backward() ... with NO model.train() between them.
+The TRAINING signal is optimizer.step() — not just backward() alone.
 
-YES = Found: training (backward/step) after eval() without train() call
-NO = Clean: model.train() called between eval() and training, or no eval before training
+Check for: model.eval() ... optimizer.step() ... with NO model.train() on the SAME model between them.
+
+IMPORTANT for loops: If model.eval() is inside a loop body and the loop continues to the NEXT iteration where the same model does backward()/step() without model.train() being called, that IS a bug. The eval() persists across iterations.
+
+NOT a bug (answer NO):
+- backward() without optimizer.step(): may be saliency maps, GradCAM, adversarial examples — these legitimately call backward() in eval mode
+- Different models: model_A.eval() then model_B trains — only flag if the SAME model that was set to eval() is then trained
+- Custom wrappers like model.evaluate(...) that may handle mode switching internally — only flag explicit model.eval() calls
+- Pure inference functions: no optimizer object, parameters have requires_grad=False, function is for visualization
+
+YES = Found: optimizer.step() for a model that is in eval mode (model.eval() called, no model.train() restoring it)
+NO = Clean: model.train() called between eval() and training on same model, different models, backward() only (no optimizer.step()), or no eval before training
 """
 
 warning_message = """
@@ -54,7 +64,7 @@ min_confidence = 0.85
 type = "function"
 name = "train_model"
 snippet = "for batch_data, batch_labels in train_loader:"
-lines = [25, 37]
+lines = [37]
 
 [[tests.positive]]
 file = "test_positive/no_train_after_eval.py"

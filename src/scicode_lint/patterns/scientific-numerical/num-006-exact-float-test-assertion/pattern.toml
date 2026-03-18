@@ -34,7 +34,7 @@ Exact equality assertions (assert x == y, assertEqual) on computed floats are un
 
 Correct approach: Use np.testing.assert_allclose(actual, expected, rtol, atol).
 
-Does this test code use exact equality on floats?
+Does this code use exact equality assertions on computed floats?
 
 Look for:
 - assert result == 1.0 on computed float values
@@ -42,7 +42,7 @@ Look for:
 - (array1 == array2).all() in test assertions
 
 YES = Bug found: exact equality assertion on floating point values
-NO = Correct: uses assert_allclose/assert_almost_equal, or asserting integers/shapes
+NO = Correct: uses assert_allclose/assert_almost_equal/pytest.approx, or asserting integers/shapes
 """
 
 warning_message = """

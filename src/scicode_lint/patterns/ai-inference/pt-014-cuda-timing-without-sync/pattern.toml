@@ -22,9 +22,9 @@ references = ["https://pytorch.org/docs/stable/notes/cuda.html#asynchronous-exec
 
 [detection]
 question = """
-Does this code benchmark GPU KERNEL timing without synchronization?
+Does this code benchmark GPU operation timing without synchronization?
 
-IMPORTANT: Only flag code explicitly measuring GPU kernel/model execution time.
+IMPORTANT: Only flag code explicitly measuring GPU operation/model execution time.
 High-level program timing (measuring overall script duration) does NOT need synchronize().
 
 Look for explicit GPU benchmarking patterns:
@@ -40,7 +40,7 @@ NOT a bug (answer NO):
 - Operations that implicitly sync: .cpu(), .numpy(), print(tensor), saving results
 - torch.cuda.synchronize() called before end time
 
-YES = Bug: Explicit GPU kernel timing without synchronize() before end time
+YES = Bug: Explicit GPU operation timing without synchronize() before end time
 NO = Clean: High-level timing, profiler, CUDA events, implicit sync, or synchronize() called
 """
 
@@ -63,7 +63,7 @@ min_confidence = 0.85
 type = "function"
 name = "benchmark_model"
 snippet = "time.perf_counter()"
-lines = [10, 13]
+lines = [10, 11, 12, 13]
 
 [[tests.positive]]
 file = "test_positive/timing_without_sync.py"
@@ -75,7 +75,7 @@ min_confidence = 0.85
 type = "function"
 name = "measure_inference_time"
 snippet = "time.time()"
-lines = [20, 23]
+lines = [20, 21, 22, 23]
 
 [[tests.negative]]
 file = "test_negative/cpu_benchmark.py"
@@ -103,7 +103,7 @@ min_confidence = 0.85
 type = "function"
 name = "profile_layers"
 snippet = "time.time()"
-lines = [10, 12, 14, 16]
+lines = [10, 11, 12, 14, 15, 16]
 
 [[tests.positive]]
 file = "test_positive/latency_measurement.py"
@@ -115,4 +115,4 @@ min_confidence = 0.85
 type = "function"
 name = "profile_forward_pass"
 snippet = "time.perf_counter()"
-lines = [10, 12]
+lines = [10, 11, 12]

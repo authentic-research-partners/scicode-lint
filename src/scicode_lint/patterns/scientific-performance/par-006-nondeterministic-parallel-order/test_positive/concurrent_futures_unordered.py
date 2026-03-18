@@ -21,5 +21,6 @@ def build_sensor_matrix(sensor_ids):
 
 sensor_ids = list(range(20))
 sensor_matrix = build_sensor_matrix(sensor_ids)
-correlations = np.corrcoef(sensor_matrix)
-labels = [f"sensor_{i}" for i in sensor_ids]
+baseline = sensor_matrix[0]
+diffs = sensor_matrix - baseline
+per_sensor_drift = np.mean(diffs, axis=1)

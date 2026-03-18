@@ -41,9 +41,17 @@ def compute_kernel_gram_matrix(X, gamma=1.0):
     return K
 
 
-def correlation_matrix(features):
-    return np.corrcoef(features.T)
+n_atoms = 150
+atom_coords = np.random.randn(n_atoms, 3)
+mol_dists = compute_molecular_distances(atom_coords)
 
+n_conformations = 50
+conformations = np.random.randn(n_conformations, n_atoms, 3)
+rmsd = ensemble_rmsd_matrix(conformations)
 
-def covariance_analysis(samples):
-    return np.cov(samples.T)
+n_vertices = 80
+adj = np.random.randint(0, 2, size=(n_vertices, n_vertices))
+shortest = graph_shortest_paths(adj)
+
+X = np.random.randn(200, 64)
+K = compute_kernel_gram_matrix(X)

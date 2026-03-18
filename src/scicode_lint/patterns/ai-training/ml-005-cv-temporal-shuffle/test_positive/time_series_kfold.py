@@ -1,15 +1,15 @@
 import pandas as pd
 from sklearn.ensemble import RandomForestRegressor
-from sklearn.model_selection import RepeatedKFold
+from sklearn.model_selection import KFold
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
 
 class TimeSeriesValidator:
-    """Validator for time-series stock price prediction."""
+    """Validator for stock price prediction with cross-validation."""
 
-    def __init__(self, n_splits=5, n_repeats=3):
-        self.cv = RepeatedKFold(n_splits=n_splits, n_repeats=n_repeats, random_state=42)
+    def __init__(self, n_splits=5):
+        self.cv = KFold(n_splits=n_splits, shuffle=True, random_state=42)
         self.pipeline = Pipeline(
             [("scaler", StandardScaler()), ("model", RandomForestRegressor(n_estimators=50))]
         )

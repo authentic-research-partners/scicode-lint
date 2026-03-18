@@ -41,12 +41,15 @@ If NOT benchmark code (answer NO immediately):
 
 SECOND: For BENCHMARK code only, check for warmup:
 - Uses torch.profiler or `with profile(` → NO (profiler handles warmup)
-- Warmup loop runs BEFORE timing starts → NO
+- A warmup block exists ANYWHERE in the same function before the timed section — look for: # Warmup comment, a standalone forward pass not inside the timed loop, or any inference call before timing starts → NO
+- IMPORTANT: Warmup may be separated from the timing loop by many lines. Scan the entire function for any inference call that runs before the timer starts
 - First N iterations discarded from results → NO
 - CPU-only code (no .cuda(), no CUDA tensors) → NO
+- The timed code includes model training (fit(), train(), optimizer.step(), cross-validation folds) → NO. GPU warmup cannot precede training that hasn't happened yet. These are training benchmarks, not inference microbenchmarks
+- Timing loop iterates over data folds, hyperparameter configurations, or model variants → NO (each iteration may train a new model; warmup concept does not apply)
 
-YES = GPU BENCHMARK timing from first iteration without warmup
-NO = Not benchmark code, OR has warmup, OR CPU-only, OR uses profiler
+YES = GPU inference-only BENCHMARK timing from first iteration without warmup
+NO = Not benchmark code, OR has warmup anywhere in function, OR CPU-only, OR uses profiler, OR timed code includes training
 """
 
 warning_message = """
@@ -86,8 +89,12 @@ description = "Proper benchmarking with warmup iterations"
 file = "test_negative/training_timing.py"
 description = "Training progress timing - operational monitoring, not benchmarking"
 
+[[tests.negative]]
+file = "test_negative/simple_warmup_loop.py"
+description = "Plain function with explicit warmup loop before timed measurement"
+
 [[tests.positive]]
-file = "test_positive/profile_model.py"
+file = "test_positive/inference_timing_no_warmup.py"
 description = "Profiling inference timing without warmup iterations before measurement loop"
 expected_issue = "Timing includes overhead from first inference pass, producing inaccurate baseline measurements"
 min_confidence = 0.85

@@ -509,9 +509,16 @@ Evals use **name-based matching** as the primary validation:
 3. **Snippet match**: Code snippet similarity (Jaccard threshold)
 
 The `lines` field serves as:
+- **Focus line eval metric**: Checks whether the linter's `focus_line` lands on one of the expected buggy lines
 - **Deterministic validation**: Snippet must exist at these lines (checked by `validate.py`)
 - **Debugging aid**: When evals fail, shows expected vs detected lines
-- **Human reference**: Helps pattern authors locate the bug in test files
+
+**How to write `lines`:**
+- List **all lines** that are part of the bug, not just key lines
+- For contiguous bug spans, include every line (e.g., `[10, 11, 12, 13]` not `[10, 13]`)
+- For non-contiguous buggy spots in the same function (e.g., two separate calls), list each spot's lines
+- Only list lines within the named function — never across function boundaries
+- The linter reports one `focus_line`; evals check if it falls within these expected lines
 
 **Note:** The linter's LLM outputs a name-based location (function name + approximate line), which is then resolved to exact lines via AST. See [DETECTION_ARCHITECTURE.md](../../../docs_dev_genai/DETECTION_ARCHITECTURE.md) for details.
 

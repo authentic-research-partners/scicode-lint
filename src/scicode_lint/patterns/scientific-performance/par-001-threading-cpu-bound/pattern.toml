@@ -17,7 +17,6 @@ Using ThreadPoolExecutor or threading for CPU-bound pure Python work (e.g., loop
 
 explanation = """
 Wrong concurrency: threading on CPU-bound pure Python work gives no speedup due to GIL. Use multiprocessing or ProcessPoolExecutor for CPU-bound tasks.
-
 """
 
 tags = []
@@ -50,7 +49,6 @@ NO = Correct: threading for I/O, threading with GIL-releasing C extensions (NumP
 
 warning_message = """
 Wrong concurrency: threading on CPU-bound pure Python work gives no speedup due to GIL. Use multiprocessing or ProcessPoolExecutor for CPU-bound tasks.
-
 """
 
 min_confidence = 0.85
@@ -108,4 +106,8 @@ lines = [28]
 
 [[tests.negative]]
 file = "test_negative/parallel_compute_mp.py"
-description = "Multiprocessing Pool correctly used for CPU-bound matrix multiplication - each process bypasses GIL on separate core"
+description = "Multiprocessing Pool correctly used for CPU-bound matrix multiplication - each process runs independently"
+
+[[tests.negative]]
+file = "test_negative/threading_numpy_blas.py"
+description = "ThreadPoolExecutor with NumPy BLAS operations (SVD, dot product) - GIL released during BLAS calls, threading is correct here"

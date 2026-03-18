@@ -40,7 +40,7 @@ NOT a bug (answer NO):
 - torch.jit.load() - different API, handles device mapping
 - safetensors.torch.load_file() - no device encoding in format
 - torch.load(..., map_location=...) - explicitly specified
-- CUDA-only scripts: if code explicitly requires CUDA (assert cuda.is_available), map_location doesn't help
+- CUDA-only scripts: if code explicitly asserts CUDA availability and will never run on CPU, the GPU→CPU mismatch scenario is moot
 
 YES = Bug: torch.load() without map_location in general-purpose code
 NO = Clean: Lightning load_from_checkpoint, jit.load, safetensors, map_location specified, or CUDA-only
@@ -51,7 +51,10 @@ torch.load() without map_location can fail on CPU-only systems. Always specify m
 """
 
 min_confidence = 0.85
-false_positive_risks = []
+false_positive_risks = [
+    "Lambda-style map_location (e.g., map_location=lambda storage, loc: storage) may not be recognized as specifying map_location",
+    "CUDA-only scripts that assert torch.cuda.is_available() and will never run on CPU — flagging map_location absence is a false positive",
+]
 
 [tests]
 
@@ -81,10 +84,10 @@ lines = [22]
 
 [[tests.negative]]
 file = "test_negative/jit_load_model.py"
-description = "Using torch.jit.load with map_location"
+description = "Using torch.jit.load() which is a different API that handles device mapping internally"
 
 [[tests.negative]]
-file = "test_negative/model_from_scratch.py"
+file = "test_negative/checkpoint_loader_with_map_location.py"
 description = "Loading checkpoints with map_location using a class-based loader and helper functions"
 
 [[tests.negative]]
@@ -146,3 +149,27 @@ type = "function"
 name = "load_pretrained_weights"
 snippet = "torch.load(weights_path)"
 lines = [27]
+
+[[tests.positive]]
+file = "test_positive/load_weights_only.py"
+description = "Using weights_only=True for security but missing map_location for device portability"
+expected_issue = "torch.load() with weights_only but without map_location will fail on CPU-only systems"
+min_confidence = 0.85
+
+[tests.positive.expected_location]
+type = "function"
+name = "load_classifier"
+snippet = "torch.load(model_path, weights_only=True)"
+lines = [18]
+
+[[tests.positive]]
+file = "test_positive/load_weights_only.py"
+description = "Loading fine-tuned head weights with weights_only but no map_location"
+expected_issue = "torch.load() with weights_only but without map_location will fail on CPU-only systems"
+min_confidence = 0.85
+
+[tests.positive.expected_location]
+type = "function"
+name = "load_finetuned_head"
+snippet = "torch.load(head_path, weights_only=True)"
+lines = [25]

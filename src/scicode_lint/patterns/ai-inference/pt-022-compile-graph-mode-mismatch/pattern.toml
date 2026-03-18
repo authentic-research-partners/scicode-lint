@@ -13,7 +13,7 @@ A torch.compile() model used in both training and inference modes triggers recom
 """
 
 explanation = """
-torch.compile() caches graphs based on input shapes and modes. Switching between train()/eval() or no_grad()/requires_grad on a compiled model triggers recompilation each time, adding significant overhead. This is a performance issue, not a functional error - the code still runs correctly but slower than expected.
+torch.compile() caches graphs based on input shapes and modes. Switching between train()/eval() or no_grad()/requires_grad on a compiled model triggers recompilation on first use of each mode, adding warmup overhead when the model switches modes. This is a performance issue, not a functional error - the code still runs correctly but slower than expected.
 """
 
 tags = ["pytorch", "torch-compile", "performance"]
@@ -30,8 +30,7 @@ Does this code use the SAME torch.compile() model in BOTH training and inference
 PERFORMANCE ISSUE: torch.compile() caches graphs for the mode (train/eval) at first call. Reusing one compiled model for both modes triggers recompilation each time the mode switches, adding significant overhead. This is NOT a functional error - the code runs correctly but slower than expected due to repeated recompilations.
 
 Look for a SINGLE compiled model that:
-1. Calls train() then later eval() (or vice versa)
-2. Used both with and without no_grad()/inference_mode()
+1. Calls both .train() and .eval() on the same object (optionally combined with no_grad()/inference_mode() - but no_grad() alone without an eval() switch is NOT an issue)
 
 NOT an issue:
 - Separate torch.compile() calls for train and eval modes
@@ -46,7 +45,10 @@ torch.compile() models incur recompilation overhead when switching between train
 """
 
 min_confidence = 0.85
-false_positive_risks = []
+false_positive_risks = [
+    "Code where train/eval switch is in unreachable branches (e.g., dead code paths, feature flags)",
+    "Models compiled once but only ever used in one mode at runtime (the other mode call exists but is never reached)",
+]
 
 [tests]
 
@@ -74,6 +76,10 @@ description = "Compiled model used only in eval mode"
 file = "test_negative/separate_compiled_models.py"
 description = "Separate compiled models for train/eval modes"
 
+[[tests.negative]]
+file = "test_negative/compiled_no_grad_same_mode.py"
+description = "Compiled model stays in train mode but uses no_grad() for validation - no mode switch, no recompilation"
+
 [[tests.positive]]
 file = "test_positive/compiled_mode_switch.py"
 description = "Compiled model switches between training and evaluation modes in validation loop"
@@ -83,8 +89,8 @@ min_confidence = 0.85
 [tests.positive.expected_location]
 type = "function"
 name = "train_and_validate"
-snippet = "compiled_model = torch.compile(model)"
-lines = [27]
+snippet = "compiled_model.train()"
+lines = [30]
 
 [[tests.positive]]
 file = "test_positive/finetune_then_serve.py"

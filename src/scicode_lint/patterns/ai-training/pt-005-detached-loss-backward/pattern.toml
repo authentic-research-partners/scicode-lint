@@ -37,17 +37,29 @@ Ways the graph gets disconnected:
 
 Correct approach: Call backward() directly on the loss tensor computed from model outputs.
 
+FIRST: Verify that a backward() call is visible in this code. If no backward() call is present, answer NO — do not infer what might happen inside unshown functions.
+
+This check only applies to code that is performing a TRAINING STEP: computing a loss from model outputs and calling backward() to update model parameters via an optimizer. It does NOT apply to gradient flows used for saliency maps, feature attribution, or computing input gradients (where input.requires_grad = True is set to capture gradients w.r.t. the input, not model weights).
+
+Look for .item() or .detach() called on the loss tensor BEFORE backward() — extracting a scalar and then backpropagating through it. NOT a bug: .item() called AFTER backward() to log the loss value.
+
 Does this code call backward() on a disconnected tensor?
 
 Look for:
-- loss.detach().backward()
+- loss.detach().backward() - explicit detach before backward
 - loss.clone().detach() followed by setting requires_grad=True - still disconnected from model
 - torch.tensor(scalar_value, requires_grad=True) followed by backward() - the new tensor is not connected to model parameters
 - loss.data.backward()
 - Metric computed from outputs.detach() then converted to tensor for backward
 
-YES = Bug found: backward() called on tensor disconnected from model graph
-NO = Correct: backward() called on loss connected to model outputs
+NOT a bug (answer NO):
+- .item() or .detach() appear in the same function but only AFTER backward() has already been called (e.g., for logging the loss value). The order matters: backward() must come first
+- backward() is used for saliency maps or input gradient computation (input.requires_grad = True), not training
+- No backward() call is present in the visible code — the code is a wrapper/orchestration function
+- backward() is called on the original loss tensor that is still connected to the model's computation graph
+
+YES = Bug found: backward() called on tensor disconnected from model graph in a training context
+NO = Correct: backward() on connected loss, .item() only after backward(), non-training gradient flow, or no backward() visible
 """
 
 warning_message = """

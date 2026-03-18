@@ -67,6 +67,43 @@ def repo_url_to_path(repo_url: str, base_dir: Path) -> Path:
     return base_dir / parts[-1]
 
 
+async def _symlink_if_redirected(requested_url: str, cloned_path: Path, output_dir: Path) -> None:
+    """Create symlink if git remote URL differs from requested URL (GitHub redirect).
+
+    For example, if we requested https://github.com/deepmind/graphcast but GitHub
+    redirected to https://github.com/google-deepmind/graphcast, create a symlink
+    google-deepmind__graphcast -> deepmind__graphcast so both paths work.
+
+    Args:
+        requested_url: The original URL we asked to clone.
+        cloned_path: The local path where the repo was cloned.
+        output_dir: Parent directory containing all cloned repos.
+    """
+    try:
+        process = await asyncio.create_subprocess_exec(
+            "git",
+            "-C",
+            str(cloned_path),
+            "remote",
+            "get-url",
+            "origin",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, _ = await process.communicate()
+        actual_url = stdout.decode().strip().rstrip("/").removesuffix(".git")
+        requested_clean = requested_url.rstrip("/").removesuffix(".git")
+
+        if actual_url and actual_url != requested_clean:
+            # GitHub redirected - create symlink from the actual URL's path
+            actual_path = repo_url_to_path(actual_url, output_dir)
+            if not actual_path.exists():
+                actual_path.symlink_to(cloned_path.name)
+                logger.info(f"Created redirect symlink: {actual_path.name} -> {cloned_path.name}")
+    except Exception as e:
+        logger.debug(f"Could not check redirect for {requested_url}: {e}")
+
+
 async def clone_repo(
     repo_url: str,
     output_dir: Path,
@@ -142,6 +179,10 @@ async def clone_repo(
                 return CloneResult(repo_url, success=False, error=error_type)
 
             logger.info(f"Cloned: {repo_url}")
+
+            # Create symlink if GitHub redirected (e.g., deepmind -> google-deepmind)
+            await _symlink_if_redirected(repo_url, repo_path, output_dir)
+
             return CloneResult(repo_url, success=True, repo_path=repo_path)
 
         except Exception as e:

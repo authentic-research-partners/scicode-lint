@@ -1,20 +1,28 @@
-"""Data augmentation using pandas sample without random_state."""
+"""Series-level sampling in an analysis pipeline without random_state."""
 
 import pandas as pd
 
 
-class DataAugmenter:
-    """Augment dataset by sampling and transforming."""
+def select_representative_features(df: pd.DataFrame, n_features: int = 20) -> list[str]:
+    """Pick a random subset of feature columns for quick analysis."""
+    feature_cols = pd.Series([c for c in df.columns if c.startswith("feat_")])
+    selected = feature_cols.sample(n=n_features)
+    return selected.tolist()
 
-    def __init__(self, df: pd.DataFrame):
-        self.df = df
 
-    def oversample_minority(self, label_col: str, target_count: int) -> pd.DataFrame:
-        """Oversample minority class - non-reproducible without random_state."""
-        minority = self.df[self.df[label_col] == 1]
-        oversampled = minority.sample(n=target_count, replace=True)
-        return pd.concat([self.df, oversampled])
+def estimate_quantiles(series: pd.Series, sample_size: int = 500) -> dict:
+    """Estimate quantiles from a random subset of a large series."""
+    subset = series.sample(n=sample_size)
+    return {
+        "q25": subset.quantile(0.25),
+        "q50": subset.quantile(0.50),
+        "q75": subset.quantile(0.75),
+    }
 
-    def create_bootstrap_samples(self, n_bootstraps: int = 10) -> list[pd.DataFrame]:
-        """Create bootstrap samples - non-reproducible."""
-        return [self.df.sample(frac=1.0, replace=True) for _ in range(n_bootstraps)]
+
+def build_calibration_set(
+    predictions: pd.Series, labels: pd.Series, frac: float = 0.1
+) -> pd.DataFrame:
+    """Sample a calibration set from predictions."""
+    idx = predictions.sample(frac=frac).index
+    return pd.DataFrame({"pred": predictions.loc[idx], "label": labels.loc[idx]})

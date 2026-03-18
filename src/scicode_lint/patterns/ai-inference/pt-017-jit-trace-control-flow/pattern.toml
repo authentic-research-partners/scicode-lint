@@ -48,7 +48,7 @@ torch.jit.trace() on models with data-dependent control flow produces incorrect 
 """
 
 min_confidence = 0.85
-false_positive_risks = []
+false_positive_risks = ["Functions accepting model as opaque parameter where control flow cannot be determined from visible code"]
 
 [tests]
 

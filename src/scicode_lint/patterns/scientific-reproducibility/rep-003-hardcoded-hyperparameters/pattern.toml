@@ -34,15 +34,26 @@ Magic numbers buried in code cannot be tracked or reproduced across experiments.
 
 Correct approach: Use config file, argparse, or named constants at module top.
 
-Does this code have hardcoded hyperparameters without configuration?
+Does this code have hardcoded hyperparameters that are UNREACHABLE by callers without modifying source code?
 
 Look for:
-- Learning rate, batch size, epochs as literals inside functions
-- Dropout rates, hidden dimensions as magic numbers
-- No config file, argparse, or constants section
+- Learning rate, batch size, epochs as literals INSIDE function bodies with no way for callers to override
+- Dropout rates, hidden dimensions as magic numbers buried in logic, not exposed as parameters
+- No config file, argparse, constants section, or function parameters for these values
 
-YES = Bug found: hyperparameters hardcoded without configuration system
-NO = Correct: uses config/argparse/constants, or no hyperparameters present
+NOT a bug (answer NO):
+- Named constants defined at MODULE TOP LEVEL (e.g., LEARNING_RATE = 0.001, BATCH_SIZE = 32, EPOCHS = 100) — even if not overridable by callers, they are organized, trackable, and easy to find. This is a correct approach
+- Default arguments in function/class signatures: def train(lr=0.001, batch_size=32) — callers can override these
+- Constructor defaults: def __init__(self, hidden_dim=256, dropout=0.3) — configurable by callers
+- Values inside HPO/tuning scripts (Optuna, hyperopt, Ray Tune) serving as search bounds or warm-start seeds
+- Commented-out or dead code that never executes
+- When a config system is substantially present and remaining literals are display flags, standard constants, or non-tunable settings
+- Dict/YAML/JSON config loaded from file with .get() fallback defaults
+- Architecture constants required to match a specific pretrained model checkpoint (e.g., input_dim, hidden_dims, layer counts that must align with saved weights) — these are load-time constraints, not tunable hyperparameters
+- Hardcoded literals with an explanatory comment directly attached that justifies why the value is a fixed design choice (e.g., "# 50% mutation + 50% pubchem" or "# full mutation by design"), provided the surrounding function also passes all genuinely tunable values as parameters or via config
+
+YES = Bug found: tunable hyperparameters hardcoded inside function bodies with no justification comment and no way for callers to override — especially when the same function/class uses argparse/config for other values, revealing inconsistency
+NO = Correct: uses config/argparse/constants, values are function/constructor defaults (overridable), architecture constraints from pretrained checkpoints, documented design choices, or no hyperparameters present
 """
 
 warning_message = """
@@ -69,14 +80,14 @@ lines = [12]
 
 [[tests.positive]]
 file = "test_positive/magic_paths_and_values.py"
-description = "Signal processing with hardcoded file paths, threshold values (0.75, 2.3, 1.42, 15), normalization factors (127.5), and smoothing window (5)."
-expected_issue = "File paths and processing parameters are hardcoded throughout the code without configuration"
+description = "Autoencoder with hardcoded layer dimensions (784, 256, 64, 16), learning rate (0.0003), scheduler params, epochs (150), and grad clipping (1.0)."
+expected_issue = "Hyperparameters (learning rate, layer dimensions, epochs, scheduler params) hardcoded in function bodies"
 min_confidence = 0.85
 
 [tests.positive.expected_location]
 type = "function"
-name = "load_data"
-snippet = "with open(\"/data/experiments/trial_042/results.json\") as f:"
+name = "build_autoencoder"
+snippet = "nn.Linear(784, 256)"
 lines = [7]
 
 [[tests.negative]]

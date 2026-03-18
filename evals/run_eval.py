@@ -6,7 +6,6 @@ of linter outputs against test case expectations.
 
 import argparse
 import asyncio
-import json
 import sys
 import time
 from datetime import datetime
@@ -30,6 +29,8 @@ if __name__ == "__main__" and __package__ is None:
         JUDGE_SYSTEM_PROMPT,
         generate_judge_prompt,
     )
+    from evals.report_generator import JudgeReportGenerator
+    from evals.variance import compute_variance_report, print_variance_report
 else:
     from .judge_models import (
         JudgeVerdict,
@@ -41,6 +42,8 @@ else:
         JUDGE_SYSTEM_PROMPT,
         generate_judge_prompt,
     )
+    from .report_generator import JudgeReportGenerator  # noqa: E402
+    from .variance import compute_variance_report, print_variance_report  # noqa: E402
 
 # Import scicode_lint components
 try:
@@ -338,6 +341,14 @@ class LLMJudgeEvaluator:
             linter_lines = linter_output.get("lines", [])
             name_match, name_match_partial = self._calculate_name_match(expected_name, linter_name)
 
+            # Calculate focus line accuracy
+            linter_focus_line = linter_output.get("focus_line")
+            focus_line_match = (
+                linter_focus_line is not None
+                and len(expected_lines) > 0
+                and linter_focus_line in expected_lines
+            )
+
             # Build evaluation result
             return TestCaseEvaluation(
                 test_file=str(test_file.relative_to(self.patterns_dir.parent)),
@@ -358,6 +369,7 @@ class LLMJudgeEvaluator:
                 expected_lines=expected_lines,
                 name_match=name_match,
                 name_match_partial=name_match_partial,
+                focus_line_match=focus_line_match,
                 judge_verdict=verdict.verdict,
                 judge_reasoning=verdict.reasoning,
                 judge_confidence=verdict.confidence,
@@ -577,6 +589,19 @@ class LLMJudgeEvaluator:
         quality_issue_count = sum(1 for e in evaluations if e.alignment == "quality_issue")
         overly_strict_count = sum(1 for e in evaluations if e.alignment == "overly_strict")
 
+        # Focus line accuracy: positive tests with expected_lines where linter detected
+        focus_eligible = [
+            e
+            for e in evaluations
+            if e.test_type == "positive" and len(e.expected_lines) > 0 and e.linter_detected != "no"
+        ]
+        focus_matched = [e for e in focus_eligible if e.focus_line_match]
+        focus_line_eligible = len(focus_eligible)
+        focus_line_matched = len(focus_matched)
+        focus_line_accuracy = (
+            focus_line_matched / focus_line_eligible if focus_line_eligible > 0 else 0.0
+        )
+
         return PatternJudgeMetrics(
             pattern_id=pattern_id,
             total_tests=len(evaluations),
@@ -592,288 +617,11 @@ class LLMJudgeEvaluator:
             both_fail_count=both_fail_count,
             quality_issue_count=quality_issue_count,
             overly_strict_count=overly_strict_count,
+            focus_line_eligible=focus_line_eligible,
+            focus_line_matched=focus_line_matched,
+            focus_line_accuracy=focus_line_accuracy,
             evaluations=evaluations,
         )
-
-
-def _compute_variance_report(
-    all_run_results: list[list[PatternJudgeMetrics]], pattern_ids: list[str]
-) -> dict[str, Any]:
-    """
-    Compute variance across multiple runs to identify unstable patterns.
-
-    Returns a report with:
-    - Per-pattern variance in accuracy
-    - Unstable patterns (where results differ across runs)
-    - Overall variance statistics
-    """
-    import statistics
-
-    # Build pattern_id -> list of accuracies across runs
-    pattern_accuracies: dict[str, list[float]] = {pid: [] for pid in pattern_ids}
-    overall_accuracies: list[float] = []
-
-    for run_results in all_run_results:
-        run_total_correct = 0
-        run_total_tests = 0
-        for pm in run_results:
-            pattern_accuracies[pm.pattern_id].append(pm.overall_accuracy)
-            run_total_correct += pm.correct_count
-            run_total_tests += pm.total_tests
-
-        if run_total_tests > 0:
-            overall_accuracies.append(run_total_correct / run_total_tests)
-
-    # Compute per-pattern stats
-    pattern_stats: list[dict[str, Any]] = []
-    unstable_patterns: list[str] = []
-
-    for pid, accuracies in pattern_accuracies.items():
-        if len(accuracies) < 2:
-            continue
-
-        mean_acc = statistics.mean(accuracies)
-        stdev_acc = statistics.stdev(accuracies) if len(accuracies) > 1 else 0.0
-        min_acc = min(accuracies)
-        max_acc = max(accuracies)
-        variance = max_acc - min_acc
-
-        stat = {
-            "pattern_id": pid,
-            "mean_accuracy": mean_acc,
-            "stdev": stdev_acc,
-            "min": min_acc,
-            "max": max_acc,
-            "variance": variance,
-            "accuracies": accuracies,
-        }
-        pattern_stats.append(stat)
-
-        # Flag as unstable if variance > 10% or stdev > 5%
-        if variance > 0.10 or stdev_acc > 0.05:
-            unstable_patterns.append(pid)
-
-    # Sort by variance (most unstable first)
-    pattern_stats.sort(key=lambda x: x["variance"], reverse=True)
-
-    # Overall stats
-    overall_mean = statistics.mean(overall_accuracies) if overall_accuracies else 0.0
-    overall_stdev = statistics.stdev(overall_accuracies) if len(overall_accuracies) > 1 else 0.0
-
-    return {
-        "num_runs": len(all_run_results),
-        "overall_mean_accuracy": overall_mean,
-        "overall_stdev": overall_stdev,
-        "overall_accuracies": overall_accuracies,
-        "pattern_stats": pattern_stats,
-        "unstable_patterns": unstable_patterns,
-    }
-
-
-def _print_variance_report(report: dict[str, Any], output_dir: Path) -> None:
-    """Print and save variance report from multi-run evaluation."""
-    lines = [
-        "",
-        "=" * 70,
-        f"VARIANCE REPORT ({report['num_runs']} runs)",
-        "=" * 70,
-        "",
-        f"Overall Mean Accuracy: {report['overall_mean_accuracy']:.2%}",
-        f"Overall Std Dev:       {report['overall_stdev']:.2%}",
-        f"Per-run accuracies:    {[f'{a:.2%}' for a in report['overall_accuracies']]}",
-        "",
-    ]
-
-    if report["unstable_patterns"]:
-        lines.extend(
-            [
-                "UNSTABLE PATTERNS (variance > 10% or stdev > 5%)",
-                "-" * 70,
-            ]
-        )
-        for pid in report["unstable_patterns"]:
-            stat = next(s for s in report["pattern_stats"] if s["pattern_id"] == pid)
-            accs = [f"{a:.0%}" for a in stat["accuracies"]]
-            lines.append(
-                f"  {pid}: {stat['mean_accuracy']:.1%} mean, "
-                f"{stat['variance']:.0%} range [{stat['min']:.0%}-{stat['max']:.0%}], "
-                f"runs: {accs}"
-            )
-        lines.extend(
-            [
-                "",
-                ">> These patterns have ambiguous detection questions.",
-                ">> Run with --verbose to see LLM reasoning differences.",
-                "",
-            ]
-        )
-    else:
-        lines.append("All patterns are stable across runs (variance < 10%).")
-        lines.append("")
-
-    lines.append("=" * 70)
-
-    # Print to console
-    print("\n".join(lines))
-
-    # Save variance report
-    variance_path = output_dir / "variance_report.json"
-    variance_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(variance_path, "w") as f:
-        json.dump(report, f, indent=2)
-    logger.info(f"Variance report saved to {variance_path}")
-
-
-class JudgeReportGenerator:
-    """Generate reports from LLM-as-judge evaluations."""
-
-    @staticmethod
-    def generate_summary_text(metrics: OverallJudgeMetrics) -> str:
-        """Generate human-readable summary."""
-        lines = [
-            "",
-            "=" * 70,
-            "LLM-AS-JUDGE EVALUATION SUMMARY",
-            "=" * 70,
-            "",
-            f"Total Patterns: {metrics.total_patterns}",
-            f"Total Tests: {metrics.total_tests}",
-            "",
-            "ACCURACY BY TEST TYPE",
-            "-" * 70,
-            f"Positive Tests:  {metrics.positive_accuracy:.2%}",
-            f"Negative Tests:  {metrics.negative_accuracy:.2%}",
-            f"Context Tests:   {metrics.context_accuracy:.2%}",
-            "",
-            f"Overall Accuracy: {metrics.overall_accuracy:.2%}",
-            f"Avg Judge Confidence: {metrics.avg_judge_confidence:.2f}",
-            "",
-            f"Patterns Above Threshold (≥85%): "
-            f"{metrics.patterns_above_threshold}/{metrics.total_patterns}",
-            "",
-            "ALIGNMENT METRICS (Direct vs Judge)",
-            "-" * 70,
-            f"Semantic Alignment:           {metrics.semantic_alignment:.1%}",
-        ]
-        # Handle conditional formatting for counts
-        if metrics.total_tests > 0:
-            both_pass_pct = metrics.both_pass_count / metrics.total_tests
-            both_fail_pct = metrics.both_fail_count / metrics.total_tests
-            cnt = metrics.both_pass_count
-            lines.append(f"  - Both Pass:                {cnt} ({both_pass_pct:.1%})")
-            cnt = metrics.both_fail_count
-            lines.append(f"  - Both Fail:                {cnt} ({both_fail_pct:.1%})")
-        else:
-            lines.append("  - Both Pass:                0 (0.0%)")
-            lines.append("  - Both Fail:                0 (0.0%)")
-
-        lines.extend(
-            [
-                "",
-                f"Quality Issue Rate:           {metrics.quality_issue_rate:.1%} "
-                f"({metrics.quality_issue_count} cases)",
-                "  (Direct passes, Judge fails - right location, wrong explanation)",
-                "",
-                f"Ground Truth Strictness Rate: {metrics.ground_truth_strictness_rate:.1%} "
-                f"({metrics.overly_strict_count} cases)",
-                "  (Direct fails, Judge passes - ground truth too rigid)",
-                "",
-                "=" * 70,
-            ]
-        )
-        return "\n".join(lines)
-
-    @staticmethod
-    def save_json_report(metrics: OverallJudgeMetrics, output_path: Path) -> None:
-        """Save metrics as JSON."""
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(output_path, "w") as f:
-            json.dump(metrics.model_dump(), f, indent=2)
-        logger.info(f"JSON report saved to {output_path}")
-
-    @staticmethod
-    def save_markdown_report(metrics: OverallJudgeMetrics, output_path: Path) -> None:
-        """Save metrics as Markdown."""
-        lines = [
-            "# LLM-as-Judge Evaluation Report",
-            "",
-            f"**Total Patterns:** {metrics.total_patterns}  ",
-            f"**Total Tests:** {metrics.total_tests}  ",
-            f"**Overall Accuracy:** {metrics.overall_accuracy:.2%}  ",
-            "",
-            "## Accuracy by Test Type",
-            "",
-            "| Test Type | Accuracy |",
-            "|-----------|----------|",
-            f"| Positive | {metrics.positive_accuracy:.2%} |",
-            f"| Negative | {metrics.negative_accuracy:.2%} |",
-            f"| Context-Dependent | {metrics.context_accuracy:.2%} |",
-            "",
-            "## Alignment Metrics (Direct vs Judge)",
-            "",
-            "| Metric | Value |",
-            "|--------|-------|",
-            f"| Semantic Alignment | {metrics.semantic_alignment:.1%} |",
-            f"| Quality Issue Rate | {metrics.quality_issue_rate:.1%} |",
-            f"| Ground Truth Strictness Rate | {metrics.ground_truth_strictness_rate:.1%} |",
-            "",
-            "**Interpretation:**",
-            "- **Quality Issues**: Direct metrics pass but judge fails "
-            "(right location, wrong explanation)",
-            "- **Overly Strict**: Direct metrics fail but judge passes (ground truth too rigid)",
-            "",
-            "## Line Overlap Metrics",
-            "",
-            "Line overlap checks that detected lines match expected lines (≥50% required).",
-            "",
-        ]
-
-        lines.extend(
-            [
-                "## Per-Pattern Results",
-                "",
-                "| Pattern ID | Tests | Accuracy | Aligned | Quality Issues |",
-                "|------------|-------|----------|---------|----------------|",
-            ]
-        )
-
-        for pattern in sorted(metrics.patterns, key=lambda p: p.overall_accuracy, reverse=True):
-            lines.append(
-                f"| {pattern.pattern_id} | {pattern.total_tests} | "
-                f"{pattern.overall_accuracy:.2%} | {pattern.alignment_rate:.0%} | "
-                f"{pattern.quality_issue_count} |"
-            )
-
-        # Add divergent cases section if any exist
-        divergent_patterns = [
-            p for p in metrics.patterns if p.quality_issue_count > 0 or p.overly_strict_count > 0
-        ]
-        if divergent_patterns:
-            lines.extend(
-                [
-                    "",
-                    "## Divergent Cases (Need Attention)",
-                    "",
-                ]
-            )
-            for pattern in divergent_patterns:
-                divergent_cases = [e for e in pattern.evaluations if not e.aligned]
-                if divergent_cases:
-                    lines.append(f"### {pattern.pattern_id}")
-                    lines.append("")
-                    for case in divergent_cases:
-                        emoji = "!!" if case.alignment == "quality_issue" else ">>"
-                        lines.append(f"- {emoji} **[{case.alignment}]** `{case.test_file}`")
-                        direct_status = "PASS" if case.direct_passed else "FAIL"
-                        lines.append(f"  - Direct: {direct_status} - {case.direct_reason}")
-                        reason_truncated = case.judge_reasoning[:80]
-                        lines.append(f"  - Judge: {case.judge_verdict} - {reason_truncated}...")
-                    lines.append("")
-
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(output_path, "w") as f:
-            f.write("\n".join(lines))
-        logger.info(f"Markdown report saved to {output_path}")
 
 
 async def main() -> int:
@@ -965,7 +713,7 @@ async def main() -> int:
             logger.info(f"vLLM server already running at {server_info.base_url}")
         else:
             logger.error(f"vLLM server not running at {args.llm_base_url}")
-            logger.info("Start it with: bash src/scicode_lint/vllm/start_vllm.sh")
+            logger.info("Start it with: scicode-lint vllm-server start")
             logger.info("Or provide a URL: --llm-base-url http://host:port")
             return 1
     except ImportError:
@@ -1094,6 +842,13 @@ async def main() -> int:
     quality_issue_rate = total_quality_issues / total_tests if total_tests > 0 else 0.0
     ground_truth_strictness_rate = total_overly_strict / total_tests if total_tests > 0 else 0.0
 
+    # Aggregate focus line accuracy
+    total_focus_eligible = sum(p.focus_line_eligible for p in pattern_metrics)
+    total_focus_matched = sum(p.focus_line_matched for p in pattern_metrics)
+    total_focus_accuracy = (
+        total_focus_matched / total_focus_eligible if total_focus_eligible > 0 else 0.0
+    )
+
     overall_metrics = OverallJudgeMetrics(
         total_patterns=len(pattern_metrics),
         total_tests=total_tests,
@@ -1112,12 +867,15 @@ async def main() -> int:
         both_fail_count=total_both_fail,
         quality_issue_count=total_quality_issues,
         overly_strict_count=total_overly_strict,
+        focus_line_eligible=total_focus_eligible,
+        focus_line_matched=total_focus_matched,
+        focus_line_accuracy=total_focus_accuracy,
     )
 
     # Compute variance across runs if multiple runs
     variance_report: dict[str, Any] | None = None
     if num_runs > 1:
-        variance_report = _compute_variance_report(all_run_results, pattern_ids)
+        variance_report = compute_variance_report(all_run_results, pattern_ids)
 
     # Determine output directory with timestamp
     if args.output_dir is None:
@@ -1148,7 +906,7 @@ async def main() -> int:
 
     # Print variance report if multiple runs
     if variance_report:
-        _print_variance_report(variance_report, output_dir)
+        print_variance_report(variance_report, output_dir)
 
     return 0
 

@@ -34,13 +34,20 @@ Correct approach: Split data first, then fit scalers/encoders only on training d
 
 Does this code have data leakage from preprocessing?
 
+IGNORE if mean/std/min/max values are read from module-level constants, dictionaries, JSON/YAML files, or function arguments (e.g., FORECAST_MEANS, NORM_STATS, config['mean']) — only flag when statistics are COMPUTED from array data (e.g., .mean(), .std(), np.mean(arr), scaler.fit(X) called on data directly).
+
 Look for:
 - Scaler/transformer fit_transform() called on full data BEFORE train_test_split()
 - Train and test arrays concatenated/vstacked BEFORE computing statistics
-- Manual mean()/std()/min()/max() on combined train+test data
+- Manual mean()/std()/min()/max() computed by calling methods on actual data arrays (e.g., arr.mean(), np.std(arr)) on data that includes test samples — ONLY flag if these values are actively computed from the array, not if they are loaded from constants or passed as parameters
 
-YES = Bug found: preprocessing statistics include test data
-NO = Correct: statistics computed on training data only, after split
+NOT a bug (answer NO):
+- Statistics loaded from external constants, config files, pre-computed files, or hardcoded values (e.g., FORECAST_MEANS, NORM_STATS, config['mean']) — these are not fit on the current dataset
+- Code contains a comment explicitly stating this is intentional (e.g., 'scaling on full dataset by design', 'empirically verified no impact') — do not flag documented design decisions
+- Statistics computed on training data only, after split
+
+YES = Bug found: preprocessing statistics actively computed from data that includes test samples
+NO = Correct: statistics computed on training data only, statistics loaded from constants/config, or documented intentional choice
 """
 
 warning_message = """
@@ -110,7 +117,7 @@ lines = [8]
 
 [[tests.negative]]
 file = "test_negative/robust_scaler_correct.py"
-description = "Correct: train_test_split first, then RobustScaler fit on train only, transform on test"
+description = "Correct: Pipeline with StandardScaler ensures preprocessing stays inside cross-validation folds"
 
 [[tests.negative]]
 file = "test_negative/robust_scaler_proper.py"

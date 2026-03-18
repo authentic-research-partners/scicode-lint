@@ -33,14 +33,22 @@ Analyze inference/evaluation setup in this code.
 
 torch.no_grad() only disables gradient computation (saves memory). model.eval() sets the model to evaluation mode (disables dropout, uses running stats for batchnorm). Both are needed for correct inference.
 
+The bug only applies when the code's PURPOSE is correct inference results (evaluation, testing, prediction). If the code intentionally stays in training mode (benchmarks, training profiling), the absence of model.eval() is correct.
+
 Does this code use no_grad() or inference_mode() without model.eval()?
 
 Look for:
 - torch.no_grad() or torch.inference_mode() context without corresponding model.eval()
 - Inference code that disables gradients but leaves model in training mode
 
-YES = Bug found: no_grad()/inference_mode() used but model.eval() is missing
-NO = Correct: model.eval() present (with or without no_grad()), or no no_grad()/inference_mode() usage at all
+NOT a bug (answer NO):
+- The code is explicitly benchmarking or profiling training performance (function name or docstring says "benchmark", "profile", or "training", or model.train() is explicitly called before the no_grad block)
+- The code uses a high-level framework trainer that manages eval mode internally — trainer.test(), trainer.validate(), trainer.predict() (PyTorch Lightning), Trainer.evaluate(), Trainer.predict() (Hugging Face), or equivalent
+- model.eval() is present (with or without no_grad())
+- No no_grad()/inference_mode() usage at all
+
+YES = Bug found: no_grad()/inference_mode() used for inference/evaluation but model.eval() is missing, and the code is not benchmarking training behavior, and no framework trainer manages the lifecycle
+NO = Correct: model.eval() present, intentional training-mode benchmark, framework trainer manages eval mode, or no no_grad() usage
 """
 
 warning_message = """
@@ -48,7 +56,10 @@ Missing model.eval() leaves dropout active and batchnorm using batch statistics 
 """
 
 min_confidence = 0.85
-false_positive_risks = []
+false_positive_risks = [
+    "model.eval() called in the constructor (__init__) — the model is set to eval mode at creation time, so inference methods correctly omit a separate eval() call",
+    "Framework-managed trainers (e.g., PyTorch Lightning Trainer.predict(), Trainer.test(), or Hugging Face Trainer.evaluate()) handle eval mode internally, so user code does not need explicit model.eval()",
+]
 
 [tests]
 
@@ -96,6 +107,30 @@ type = "class"
 name = "ModelServer"
 snippet = "class ModelServer"
 lines = [4]
+
+[[tests.positive]]
+file = "test_positive/inference_mode_serving.py"
+description = "Model serving functions that use torch.inference_mode() instead of torch.no_grad() but still forget to call model.eval(), leaving dropout and batchnorm in training mode"
+expected_issue = "Both serve_prediction() and run_batch_inference() use inference_mode() but never call model.eval(), so dropout remains active and batchnorm uses batch statistics instead of learned running statistics"
+min_confidence = 0.85
+
+[tests.positive.expected_location]
+type = "function"
+name = "serve_prediction"
+snippet = "with torch.inference_mode():"
+lines = [28]
+
+[[tests.positive]]
+file = "test_positive/realtime_embedding_service.py"
+description = "Text embedding service class that uses torch.inference_mode() in all methods but never calls model.eval(), leaving dropout and layer norm in training mode"
+expected_issue = "EmbeddingService methods encode_single(), encode_batch(), and compute_similarity() all use inference_mode() but the model is never set to eval mode, so dropout remains active during inference"
+min_confidence = 0.85
+
+[tests.positive.expected_location]
+type = "class"
+name = "EmbeddingService"
+snippet = "class EmbeddingService"
+lines = [26]
 
 [[tests.negative]]
 file = "test_negative/eval_only_no_grad.py"

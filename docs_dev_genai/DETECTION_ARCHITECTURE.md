@@ -184,6 +184,51 @@ If the same bug pattern appears multiple times in a file (e.g., data leakage in 
 
 The LLM prompt explicitly instructs: "If multiple instances exist, report the MOST CLEAR example."
 
+## Single-Location Reporting (Known Limitation)
+
+**The linter reports exactly one location per finding: one function name + one approximate line.**
+
+This means:
+
+1. **Multi-line bugs within a function** (e.g., `start = time.time()` on line 10 and `end = time.time()` on line 13 without `synchronize()` between them) — the linter reports the function name. The user sees the whole function and can identify all relevant lines. **This works well enough.**
+
+2. **Cross-function bugs** (e.g., a scaler fitted on train+test data in `preprocess()` then used in `evaluate()`) — the linter can only point to one function. **This is not supported.**
+
+**Why this is acceptable today:**
+- All 66 current patterns are function-local — no pattern requires cross-function detection
+- The constrained local LLM (Qwen3) already struggles with single-location accuracy; multiple locations would reduce reliability
+- Function-level granularity is sufficient for the user to find and fix the issue
+
+**Why we are not implementing multi-location reporting now:**
+- No current pattern needs it (YAGNI)
+- Would require schema changes (`NamedLocation` → list), prompt changes, output formatter changes, and eval framework changes
+- Higher complexity with no proven benefit for current patterns
+
+**When to revisit:** If we add patterns that detect cross-function bugs (e.g., data leakage across pipeline stages), this limitation becomes real and should be addressed.
+
+**Related:** The `lines` field in `pattern.toml` test entries lists all buggy lines within the named function. The linter does not consume them at runtime, but evals use them for the focus line accuracy metric (see below).
+
+## Focus Line Accuracy (Eval Metric)
+
+**What it measures:** Does the linter's `focus_line` (derived from the LLM's `near_line` hint) land on one of the expected buggy lines from `pattern.toml`?
+
+**How it works:**
+1. Pattern.toml lists `lines = [10, 11, 12, 13]` — all buggy lines within the named function
+2. The linter's LLM returns `near_line` (approximate), which is verified against the AST-resolved function range to produce `focus_line`
+3. Evals check: `focus_line ∈ expected_lines`
+
+**Scope:** Only positive tests where the linter detected an issue and the pattern has `expected_location.lines`.
+
+**Current baseline:** ~42% accuracy. The LLM finds the right function reliably but points at the exact buggy line less than half the time.
+
+**Not a gate in the improvement loop.** This is an observational metric, not actionable:
+- It doesn't affect detection correctness (right function is found via name match)
+- It doesn't affect user experience (users see the whole function context)
+- Tuning prompts for line precision could hurt detection accuracy
+- `near_line` is documented as an optional, approximate hint
+
+**When to revisit:** If we add output features that depend on precise line targeting (e.g., inline IDE annotations), focus line accuracy becomes important.
+
 ## Edge Cases
 
 ### Module-Level Code

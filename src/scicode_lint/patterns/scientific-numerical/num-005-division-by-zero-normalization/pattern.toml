@@ -33,32 +33,48 @@ Analyze normalization operations for division by zero.
 
 Standard deviation or range can be zero for constant features, causing inf or NaN.
 
-Does this code divide by COMPUTED std/range without zero protection?
+PREREQUISITE: There must be a visible division operator (/ or /=) in this code. If no literal division syntax is present, answer NO immediately.
 
-Look for:
-- (data - mean) / std where std is computed from data
-- (x - min) / (max - min) where range is computed from data
-- Division by values that could be zero if data is constant
+PREREQUISITE 2: If the only normalization in the code is a METHOD CALL with no visible division (e.g., normalize(), fit_transform(), StandardScaler()), answer NO immediately — the division is inside the library and handled safely.
+
+REQUIRED CHECK — What is the denominator?
+- If it is .sum(), .count(), len(), sum(mask), token counts → answer NO (this is averaging, not std normalization)
+- If it is .std(), np.std(), np.sqrt(variance), (max-min), .norm(), np.linalg.norm() → continue to YES/NO check below
+- If unsure → answer NO
+
+Does this code divide by COMPUTED std/range/norm without zero protection?
+
+The denominator must be SPECIFICALLY:
+- A variable named std, stds, sigma, or holding result of .std() / np.std() / np.sqrt(var)
+- A range expression: (max - min), x.max() - x.min(), computed max minus computed min
+- A norm: np.linalg.norm(...), tensor.norm(), computed magnitude of a vector
+AND none of the NO conditions apply.
 
 NOT a bug (answer NO):
-- Pre-computed constants: ImageNet stats [0.229, 0.224, 0.225], known non-zero values
+- No literal / or /= operator in the code (division happens inside a called method/function)
+- Division by a sum/count: x / mask.sum(), scores / token_mask.sum(-1), total / count.sum(dim) — this is averaging or normalization by length, NOT std normalization
+- Delegation: self.X.normalize(), scaler.fit_transform(X), sklearn.preprocessing.normalize(), or similar method calls that handle division internally
+- Pre-computed constants: ImageNet stats [0.229, 0.224, 0.225], known non-zero values from module constants or config attributes
 - sklearn.preprocessing.StandardScaler - handles zero std internally (replaces with 1.0)
 - sklearn.preprocessing.MinMaxScaler - handles zero range internally
 - torchvision.transforms.Normalize - uses pre-computed dataset statistics
-- Epsilon guards: (std + 1e-8), np.maximum(std, eps)
+- Epsilon guards: (std + 1e-8), np.maximum(std, eps), .clip(min=eps)
 - Explicit zero checks before division
+- np.where(condition, a / b, fallback) — zero elements masked by the condition
 
-YES = Bug: Division by COMPUTED std/range from data without epsilon/check
-NO = Clean: Pre-computed constants, library implementations, or guarded division
+YES = Bug: visible / or /= dividing by COMPUTED std/range/norm (not sum/count) from data without epsilon/check
+NO = Clean: no visible division, denominator is sum/count, delegation to library, pre-computed constants, or guarded division
 """
 
 warning_message = """
-Division by zero in normalization: std is 0 for constant features, producing inf or NaN. Check for zero std and handle it.
+Division by zero when normalization factor (std, range, or norm) is zero for constant/zero-valued data, producing inf or NaN. Add an epsilon guard or explicit zero check before dividing.
 
 """
 
 min_confidence = 0.85
-false_positive_risks = []
+false_positive_risks = [
+    "Pre-computed constants (ImageNet/CIFAR std values) could be mistakenly flagged if not recognized as constants",
+]
 
 [tests]
 
@@ -88,11 +104,11 @@ lines = [8]
 
 [[tests.negative]]
 file = "test_negative/safe_normalization.py"
-description = "Division with epsilon added to denominator (std + 1e-8) or explicit zero checks before division"
+description = "Epsilon guards: (std + eps), (norms + eps), np.maximum(std, eps) and (range + eps) patterns preventing division by zero"
 
 [[tests.negative]]
 file = "test_negative/checked_division.py"
-description = "Explicit if/else handling for zero denominators using np.maximum(), np.isclose(), or conditional returns"
+description = "Explicit zero checks before dividing by std, range, or norm: if-else guards, np.where masking, and boolean masks that skip zero denominators"
 
 
 [[tests.positive]]
@@ -109,7 +125,7 @@ lines = [13]
 
 [[tests.negative]]
 file = "test_negative/feature_norm_safe.py"
-description = "Safe normalization using epsilon guards: (std + eps), np.maximum(std, eps), and (norm + eps) patterns preventing division by zero"
+description = "Safe normalization using np.where, np.divide(where=...), np.clip, and conditional masking to avoid division by zero"
 
 [[tests.negative]]
 file = "test_negative/precomputed_constants.py"

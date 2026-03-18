@@ -29,31 +29,33 @@ references = [
 
 [detection]
 question = """
-Analyze this code for MULTI-TEST LEAKAGE where CV/validation scores are RETURNED as final results.
+Analyze this code for MULTI-TEST LEAKAGE where CV/validation scores are RETURNED as the FINAL performance report.
 
-KEY QUESTION: Does this function RETURN a CV score or validation accuracy as its final output?
+PRECONDITION (must be true before evaluating other conditions):
+The code contains active model training or fitting: calls to .fit(), a training loop updating weights, cross_val_score/GridSearchCV executing on data in this function. If this is inference-only code, an architecture definition, a forward-pass helper, or a wrapper that delegates to another function, answer NO immediately.
 
-MULTI-TEST LEAKAGE EXISTS (answer YES) when:
-1. Function RETURNS best_score_, cv_scores.mean(), or val_acc as the result
-2. The returned value is a score/metric, not a model object
-3. No separate test set evaluation happens after CV/validation
+ANSWER NO IMMEDIATELY if ANY of these are true:
+- This function is a hyperparameter optimization objective/scoring function (its return value feeds an HPO framework: Optuna trial, Ray Tune session.report, hyperopt fmin, etc.) — using only train/val inside HPO objectives is correct by design
+- The function contains no model training (inference, architecture definition, data loading only)
+- The function is an entry point that delegates training/evaluation to a sub-function not shown
+- No validation or CV set is visible in the code (only training data, or only a test set for a simple holdout) — the multi-test leakage pattern requires a validation/CV loop to be present and misused
+- Function returns ONLY a model object (best_estimator_, trained model) — the model is meant for later evaluation on a test set. Does NOT apply if the function returns a score alongside the model (e.g., return model, val_acc)
+- Function evaluates final performance on a separate X_test
+- Nested CV where inner CV only sees X_train and returned score comes from outer test fold. Also: outer loop creates X_test splits; inner GridSearchCV/cross_val_score only sees X_train — outer fold score is unbiased — answer NO
+- Code branches on a mode flag (eval_mode, split, phase) where one branch uses the test set — the test path exists even if not always executed — answer NO
+- Explicit separate test path exists in the code
+- Three-way split: train/val/test with final eval on test
 
-Look for these return patterns:
-- return best_score_ → YES
-- return np.mean(cv_scores) → YES
-- return val_acc → YES
-- return grid_search.best_score_ → YES
-
-NOT A BUG (answer NO) when:
-1. Function RETURNS a model object (best_estimator_, trained model)
-2. Function evaluates final performance on X_test (separate test set)
-3. Inference script (no training)
-4. Three-way split: train/val/test with final eval on test
+ALL FOUR conditions must be true for YES:
+1. CV or validation score is RETURNED as the function output
+2. The CV/validation was run on data that could include test-relevant rows
+3. No separate held-out test evaluation exists in this function
+4. The returned score is the FINAL performance number reported to the user or logged as the result — NOT a value returned to a caller for further processing (HPO frameworks, outer CV loops, or upstream evaluators). If the function returns a score to ray.tune.report(), trial.suggest_*, or any HPO callback — answer NO (score is intermediate). If the function is called inside a loop that aggregates scores — answer NO (caller owns the final report)
 
 Printing scores during tuning is OK if model is returned for later test evaluation.
 
-YES = RETURNS CV/validation score as the function output
-NO = RETURNS model, or evaluates on held-out test set
+YES = RETURNS CV/validation score as the FINAL performance report with no separate test evaluation
+NO = RETURNS model, evaluates on held-out test set, nested CV outer fold, score is intermediate for HPO, no training present, or no validation set visible
 """
 
 warning_message = """
@@ -101,13 +103,14 @@ name = "tune_and_report"
 snippet = "return grid_search.best_score_"
 lines = [22]
 
-[[tests.positive]]
-file = "test_positive/nested_cv_no_holdout.py"
+[[tests.context_dependent]]
+file = "test_context_dependent/nested_cv_no_holdout.py"
 description = "Nested CV (inner for tuning, outer for eval) but no held-out test set"
-expected_issue = "Multi-test leakage: nested CV scores used as final metric, no separate test set"
-min_confidence = 0.70
+context_notes = "Nested CV outer fold scores are generally considered unbiased estimates. Some consider this sufficient, others require a separate held-out test set."
+allow_detection = true
+allow_skip = true
 
-[tests.positive.expected_location]
+[tests.context_dependent.expected_location]
 type = "function"
 name = "nested_cv_evaluation"
 snippet = "outer_scores = cross_val_score(inner_cv, X, y, cv=5)"

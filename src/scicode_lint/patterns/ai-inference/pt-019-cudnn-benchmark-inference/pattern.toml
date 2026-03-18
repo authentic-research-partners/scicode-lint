@@ -51,7 +51,9 @@ cudnn.benchmark=True with variable input sizes causes overhead. Disable it for i
 """
 
 min_confidence = 0.85
-false_positive_risks = []
+false_positive_risks = [
+    "Fixed-shape inference pipelines where all inputs are pre-resized to the same dimensions",
+]
 
 [tests]
 
@@ -82,6 +84,10 @@ description = "Benchmark disabled for variable-shape inference"
 [[tests.negative]]
 file = "test_negative/training_with_backward.py"
 description = "Training code with loss.backward() - benchmark=True is correct"
+
+[[tests.negative]]
+file = "test_negative/fixed_shape_inference.py"
+description = "GPU inference with benchmark=True but all inputs resized to fixed dimensions"
 
 [[tests.positive]]
 file = "test_positive/benchmark_variable_inputs.py"

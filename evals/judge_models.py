@@ -50,6 +50,9 @@ class TestCaseEvaluation(BaseModel):
     name_match: bool = False  # Whether detected name matches expected name
     name_match_partial: bool = False  # Partial match (e.g., "train" vs "Trainer.train")
 
+    # Focus line accuracy (whether linter's focus_line is in expected_lines)
+    focus_line_match: bool = False  # True if linter_focus_line in expected_lines
+
     # Judge evaluation
     judge_verdict: Literal["yes", "no", "partial"]
     judge_reasoning: str
@@ -107,6 +110,11 @@ class PatternJudgeMetrics(BaseModel):
     quality_issue_count: int = 0  # direct pass, judge fail
     overly_strict_count: int = 0  # direct fail, judge pass
 
+    # Focus line accuracy (positive tests with expected_lines where detection happened)
+    focus_line_eligible: int = 0  # Positive tests with expected_lines where linter detected
+    focus_line_matched: int = 0  # Where focus_line was in expected_lines
+    focus_line_accuracy: float = 0.0  # focus_line_matched / focus_line_eligible
+
     # Evaluations
     evaluations: list[TestCaseEvaluation]
 
@@ -148,3 +156,8 @@ class OverallJudgeMetrics(BaseModel):
     both_fail_count: int = 0
     quality_issue_count: int = 0
     overly_strict_count: int = 0
+
+    # Focus line accuracy (aggregated across all patterns)
+    focus_line_eligible: int = 0
+    focus_line_matched: int = 0
+    focus_line_accuracy: float = 0.0

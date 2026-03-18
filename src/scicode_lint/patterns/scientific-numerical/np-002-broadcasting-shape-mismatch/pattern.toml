@@ -29,23 +29,28 @@ references = [
 
 [detection]
 question = """
-Does this code have the EXACT pattern: .mean(axis=1) or .std(axis=1) WITHOUT keepdims=True?
+Analyze row-wise reductions used in arithmetic with 2D arrays.
 
-SIMPLE RULE: Any call to .mean(axis=1) or .std(axis=1) without "keepdims=True" is a bug if the result is used in arithmetic (-, /, *, +) with a 2D array.
+When .mean(axis=1) or .std(axis=1) is called without keepdims=True, the result collapses from 2D to 1D. If this 1D result is then used in arithmetic (+, -, *, /) with the original 2D array, NumPy broadcasting silently aligns it against columns instead of rows. The computation produces results without any error, but every value is wrong — row means get subtracted from the wrong rows. This corrupts downstream analysis (normalization, z-scores, whitening) in ways that are difficult to diagnose.
+
+The fix is straightforward: use keepdims=True to preserve the 2D shape so broadcasting works along the intended axis.
+
+Does this code use .mean(axis=1) or .std(axis=1) without keepdims=True where the result is used in arithmetic with a 2D array?
 
 Example bugs:
-  batch_mean = data.mean(axis=1)    # NO keepdims
-  normalized = data - batch_mean    # BUG
+  batch_mean = data.mean(axis=1)
+  normalized = data - batch_mean
 
-  row_means = X.mean(axis=1)        # NO keepdims
-  return X - row_means              # BUG
+  row_means = X.mean(axis=1)
+  return X - row_means
 
-NOT bugs:
-  mean = data.mean(axis=1, keepdims=True)  # Has keepdims=True
-  col_mean = data.mean(axis=0)             # axis=0 is different
+Not bugs:
+  mean = data.mean(axis=1, keepdims=True)  — has keepdims=True
+  col_mean = data.mean(axis=0)             — axis=0 is different
+  scalar = row.mean(axis=1)                — result not used in 2D arithmetic
 
-YES = Code has .mean(axis=1) or .std(axis=1) WITHOUT the keepdims=True parameter
-NO = All axis=1 reductions use keepdims=True, or only axis=0 reductions exist
+YES = Code has .mean(axis=1) or .std(axis=1) WITHOUT keepdims=True AND the result is used in arithmetic with a 2D array
+NO = No .mean(axis=1)/.std(axis=1) calls exist, all use keepdims=True, only axis=0 reductions, or result is not used in 2D arithmetic
 """
 
 warning_message = """
@@ -85,15 +90,6 @@ name = "center"
 snippet = "return self.data - self.row_means"
 lines = [11]
 
-[[tests.negative]]
-file = "test_negative/explicit_shape_check.py"
-description = "Code without .mean(axis=1) or .std(axis=1) calls - uses explicit reshape and shape assertions instead"
-
-[[tests.negative]]
-file = "test_negative/correct_broadcasting.py"
-description = "Proper use of keepdims and reshape to ensure broadcasting happens along intended dimensions with correct semantic meaning"
-
-
 [[tests.positive]]
 file = "test_positive/z_score_whitening.py"
 description = "Z-score and image whitening with axis=1 reduction without keepdims, showing different domains where this bug appears"
@@ -104,8 +100,16 @@ min_confidence = 0.85
 type = "function"
 name = "compute_z_scores"
 snippet = "z_scores = (measurements - sensor_means) / sensor_stds"
-lines = [4]
+lines = [7]
+
+[[tests.negative]]
+file = "test_negative/explicit_shape_check.py"
+description = "Code without .mean(axis=1) or .std(axis=1) calls - uses explicit reshape and shape assertions instead"
+
+[[tests.negative]]
+file = "test_negative/correct_broadcasting.py"
+description = "Proper use of keepdims and reshape to ensure broadcasting happens along intended dimensions with correct semantic meaning"
 
 [[tests.negative]]
 file = "test_negative/weighted_sum_correct.py"
-description = "PCA, cosine similarity, confidence intervals, and softmax using axis=0 reductions or axis=1 with keepdims=True for correct broadcasting"
+description = "PCA, cosine similarity, confidence intervals, and softmax using axis=0 reductions or axis=1 with norm/max/sum (not mean/std)"

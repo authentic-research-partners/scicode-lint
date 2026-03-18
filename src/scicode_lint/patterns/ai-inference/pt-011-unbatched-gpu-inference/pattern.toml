@@ -27,22 +27,29 @@ references = [
 
 [detection]
 question = """
-Does this code send an ENTIRE dataset to GPU in a single forward pass?
+Does this code send an ENTIRE DATA TENSOR (not a model) to GPU in a single forward pass?
 
 The bug: Loading ALL test data to GPU at once (e.g., model(X_test.cuda())) causes OOM on large datasets.
 
+CRITICAL DISTINCTION: .to(device) on an nn.Module (model weights) is NOT this bug. Only flag when a DATA tensor/array representing the full dataset is sent to GPU.
+
 ANSWER YES (bug) if:
-- Full dataset variable (X_test, test_images, all_data) sent to GPU
+- A data tensor/array (X_test, test_images, all_data) representing the full test/validation set is moved to GPU
+- That data tensor is passed directly into a model forward call
 - No batch loop or DataLoader visible
-- Single forward pass on entire dataset
+
+Disambiguation: If a line does .to(device) but the result is NOT passed into a model forward call (model(x)), it is likely model weight loading, not data transfer — answer NO.
 
 ANSWER NO (correct) if ANY of these:
+- Object moved to GPU is a model/nn.Module (model.to(device), model.cuda()) — this is moving model weights, not data
+- Full dataset variable passed to a function that handles batching internally (function name suggests batching: chunked_prediction, predict_batched, etc.)
 - Uses DataLoader for batching
-- Has batch loop (for batch in ..., batch_size parameter, accumulates into batches)
-- Uses torch.stack() on accumulated small batches
+- Has batch loop (for batch in ..., batch_size parameter)
+- Code processes a FIXED-SIZE SMALL BATCH: torch.stack() on a buffer/list with batch_size limit, then forward pass on that batch — this IS batching, not unbatched inference. A method named classify_batch, process_batch, etc. that takes a list of samples and stacks them is a BATCH PROCESSING method, not unbatched inference
+- Training code (loss.backward(), optimizer.step()) — different pattern
 
-YES = Bug: entire dataset to GPU in single forward pass
-NO = Correct: uses batching, DataLoader, or streaming
+YES = Bug: a DATA tensor (not model) representing full dataset sent to GPU in single forward pass
+NO = Correct: model.to(device), batching present, internal batching function, or DataLoader used
 """
 
 warning_message = """

@@ -88,10 +88,10 @@ Before running scicode-lint, start the vLLM server (skip if using remote server)
 
 ```bash
 # Start vLLM server (auto-detects GPU, validates FP8 support)
-bash src/scicode_lint/vllm/start_vllm.sh
+scicode-lint vllm-server start
 
 # Or run in background
-nohup bash src/scicode_lint/vllm/start_vllm.sh > /tmp/vllm.log 2>&1 &
+nohup scicode-lint vllm-server start > /tmp/vllm.log 2>&1 &
 ```
 
 The server auto-detects your GPU and configures optimal settings. First run downloads the model (~8GB).
@@ -142,15 +142,15 @@ Two-stage filter (runs automatically):
 
 ## Project Status
 
-**Work in Progress** (v0.2.1 alpha)
+**Work in Progress** (v0.2.2 alpha)
 
 | Test Type | Precision | Recall | Description |
 |-----------|-----------|--------|-------------|
-| Controlled tests | 95.6% | 97.0% | Curated positive/negative test files per pattern (438 tests, 66 patterns) |
+| Controlled tests | 97.7% | 97.0% | Curated positive/negative test files per pattern (452 tests, 66 patterns) |
 | Integration (LLM-generated) | 58.0% | 85.1% | 50 Sonnet-generated scenarios with 148 planted bugs; 27 bonus TPs found |
 | Labeled Kaggle notebooks | 75% | 55% | Yang et al. ASE'22 dataset (`pre` label), human-labeled ground truth |
-| Published papers (iteration) | 45.2% | - | 35 repos analyzed (120 files); used for pattern refinement |
-| Published papers (holdout) | 37.9% | - | 17 repos analyzed (45 files); unseen during development |
+| Published papers (iteration) | 62.0% | - | 32 repos analyzed (120 files); used for pattern refinement |
+| Published papers (holdout) | 54.1% | - | 17 repos analyzed (45 files); unseen during development |
 
 Example reports: [`real_world_demo/output_examples/`](real_world_demo/output_examples/)
 

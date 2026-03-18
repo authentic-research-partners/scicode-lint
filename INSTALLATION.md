@@ -123,9 +123,9 @@ vllm serve \
     --max-model-len 20000  # 20K context (16K input + 4K response)
 ```
 
-Or use the convenience script (auto-verifies hardware):
+Or use the CLI command (auto-verifies hardware):
 ```bash
-bash src/scicode_lint/vllm/start_vllm.sh
+scicode-lint vllm-server start
 ```
 
 The script will exit with an error if your hardware doesn't meet requirements (16GB+ VRAM, compute cap >= 8.9).

@@ -9,8 +9,9 @@ def preprocess_features(X, y):
     return train_test_split(X_scaled, y, test_size=0.25, random_state=42)
 
 
-def scale_all_data(features, labels):
-    combined = np.vstack([features[:800], features[800:]])
+def scale_all_data(train_features, test_features):
+    combined = np.vstack([train_features, test_features])
     scaler = RobustScaler()
     scaled = scaler.fit_transform(combined)
-    return scaled[:800], scaled[800:]
+    n_train = len(train_features)
+    return scaled[:n_train], scaled[n_train:]

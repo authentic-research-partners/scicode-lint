@@ -1,6 +1,3 @@
-# Pattern: pt-006-logit-threshold-without-sigmoid
-# Fixed: Pattern was misnamed. Actual detection is about thresholding raw logits.
-
 [meta]
 id = "pt-006"
 name = "logit-threshold-without-sigmoid"
@@ -40,15 +37,19 @@ NOT a bug (answer NO):
 - Regression models predicting continuous values (no threshold comparison)
 - Code that applies sigmoid() before thresholding
 - Code with NO threshold comparison at all
+- Threshold converted to logit space: logit_threshold = np.log(threshold / (1 - threshold)) or log(p/(1-p)) — this is mathematically equivalent to sigmoid(output) > threshold
+
+Disambiguation:
+- Is the threshold a raw probability value (0.5, 0.7) compared directly to logits? → YES, sigmoid needed
+- Is the threshold computed via log(p/(1-p)) or similar inverse-sigmoid transform? → NO, correct pattern
 
 BUG (answer YES):
-- Binary classifier output compared to 0.5 without sigmoid (e.g., logits > 0.5)
-- BCEWithLogitsLoss used but raw output thresholded directly
+- Binary classifier output compared to a RAW probability value (like 0.5, 0.7) WITHOUT sigmoid AND without converting that threshold to logit space first
 
 IMPORTANT: If there is NO threshold comparison (no > 0.5 or similar), answer NO.
 
-YES = Bug found: raw logits compared to threshold without sigmoid
-NO = Correct: sigmoid applied, OR no threshold comparison, OR multi-class/regression
+YES = Bug found: raw logits compared to probability threshold without sigmoid or logit-space conversion
+NO = Correct: sigmoid applied, threshold in logit space, no threshold comparison, or multi-class/regression
 """
 
 warning_message = """
@@ -57,7 +58,7 @@ Thresholding raw logits is meaningless — logits are unbounded. Apply torch.sig
 """
 
 min_confidence = 0.85
-false_positive_risks = []
+false_positive_risks = ["Threshold converted to logit space via log(p/(1-p)) may be mistaken for raw probability threshold"]
 
 [tests]
 
@@ -90,9 +91,12 @@ file = "test_negative/multiclass_classifier.py"
 description = "Multi-class classifier using argmax - not binary classification, no sigmoid needed"
 
 [[tests.negative]]
-file = "test_negative/text_encoder_multiclass.py"
-description = "Multi-class text encoder using softmax and argmax - not binary classification"
+file = "test_negative/sigmoid_applied.py"
+description = "CNN anomaly detector for medical scans that correctly applies sigmoid before thresholding at various operating points"
 
+[[tests.negative]]
+file = "test_negative/logit_space_threshold.py"
+description = "Threshold converted to logit space via log(p/(1-p)) - mathematically equivalent to sigmoid"
 
 [[tests.positive]]
 file = "test_positive/batch_prediction.py"

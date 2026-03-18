@@ -35,7 +35,13 @@ Given a pattern ID (e.g., "pt-001"), read and verify:
 
 5. **Negative tests avoid the bug**: Does each negative test correctly avoid the bug while being relevant code?
 
-6. **No intent hints in code**: Test files must not hint at expected answers through:
+6. **Lines are comprehensive and correct**: The `lines` field in `expected_location` must:
+   - List ALL lines that are part of the bug (not just key lines)
+   - For contiguous bug spans, include every line (e.g., `[10, 11, 12, 13]` not `[10, 13]`)
+   - Only include lines within the named function — never across function boundaries
+   - Match actual buggy lines in the test file (read the file and verify)
+
+7. **No intent hints in code**: Test files must not hint at expected answers through:
    - Comments (deterministic check catches these - all comments forbidden)
    - Docstrings explaining the bug/correctness
    - Function/variable names like `buggy_function`, `correct_approach`, `leaky_scaler`
@@ -55,6 +61,7 @@ expected_issue = "What the detected issue should be"
 type = "function"  # function, class, method, or module
 name = "function_name"
 snippet = "code_snippet_containing_bug"
+lines = [15, 16, 17]  # ALL buggy line numbers
 ```
 
 **`[[tests.negative]]`**:

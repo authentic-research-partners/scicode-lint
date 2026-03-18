@@ -46,7 +46,10 @@ ONNX export without dynamic_axes creates a fixed-shape model. Specify dynamic_ax
 """
 
 min_confidence = 0.85
-false_positive_risks = []
+false_positive_risks = [
+    "Fixed-shape exports for edge deployment on specific hardware where input dimensions are truly constant",
+    "Benchmarking or profiling exports where dynamic shapes are intentionally excluded to measure fixed-shape performance",
+]
 
 [tests]
 
@@ -60,7 +63,7 @@ min_confidence = 0.85
 type = "function"
 name = "export_model"
 snippet = "torch.onnx.export"
-lines = [17, 29]
+lines = [17]
 
 [[tests.negative]]
 file = "test_negative/torchscript_export.py"
@@ -80,15 +83,15 @@ description = "Class-based ONNX exporter with dynamic_axes for variable batch si
 
 [[tests.positive]]
 file = "test_positive/onnx_export_fixed_shape.py"
-description = "ONNX export with only input_names and output_names, missing dynamic_axes parameter."
-expected_issue = "torch.onnx.export() missing dynamic_axes parameter for variable batch size"
+description = "RNN-based sentiment model exported to ONNX without dynamic_axes for batch and sequence dimensions"
+expected_issue = "torch.onnx.export() missing dynamic_axes parameter for variable batch size and sequence length"
 min_confidence = 0.85
 
 [tests.positive.expected_location]
 type = "function"
 name = "export_model"
 snippet = "torch.onnx.export"
-lines = [24]
+lines = [21]
 
 [[tests.positive]]
 file = "test_positive/onnx_class_exporter_fixed.py"

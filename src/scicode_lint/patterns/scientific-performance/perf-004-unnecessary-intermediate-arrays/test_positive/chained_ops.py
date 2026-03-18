@@ -1,18 +1,26 @@
 import numpy as np
 
 
-def process_data(data):
-    temp1 = data * 2
-    temp2 = temp1 + 10
-    temp3 = np.sqrt(temp2)
-    temp4 = temp3 / np.max(temp3)
-    return temp4
+def process_data(data, weights):
+    diff = data - weights
+    squared = diff**2
+    total = np.sum(squared, axis=1)
+    result = np.sqrt(total)
+    return result
 
 
-def compute_rms_energy(signal, frame_size=1024):
-    frames = signal[: len(signal) // frame_size * frame_size].reshape(-1, frame_size)
-    squared = frames**2
-    mean_power = np.mean(squared, axis=1)
-    rms = np.sqrt(mean_power)
-    db_values = 20 * np.log10(rms + 1e-10)
-    return db_values
+def compute_cosine_similarity(a, b):
+    prod = a * b
+    dot = np.sum(prod, axis=1)
+    norm_a_sq = np.sum(a**2, axis=1)
+    norm_a = np.sqrt(norm_a_sq)
+    norm_b_sq = np.sum(b**2, axis=1)
+    norm_b = np.sqrt(norm_b_sq)
+    similarity = dot / (norm_a * norm_b + 1e-8)
+    return similarity
+
+
+X = np.random.randn(10000, 100)
+W = np.random.randn(10000, 100)
+distances = process_data(X, W)
+sims = compute_cosine_similarity(X, W)

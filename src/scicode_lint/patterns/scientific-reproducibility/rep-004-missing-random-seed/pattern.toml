@@ -29,23 +29,50 @@ references = [
 
 [detection]
 question = """
-Analyze random number usage for reproducibility.
+Analyze random number usage for reproducibility in TRAINING/EVALUATION/DATA-SPLITTING/SIMULATION code.
 
 Code using random operations without seed initialization produces different results each run. For reproducible experiments, all random sources (numpy, torch, random) must be seeded.
 
-Correct approach: Set np.random.seed(), torch.manual_seed(), random.seed() at the start.
+SCOPE: Flag code at the TOP-LEVEL ENTRY POINT of a script or experiment. This means:
+- main() functions
+- if __name__ == "__main__": blocks
+- Top-level train()/run()/fit() functions that are the outermost call
+- Module-level executable code (statements at indent level 0 outside any function/class) — these run when the script is executed
+- Functions that directly contain random operations (np.random.*, torch.rand*, random.*) in their body
 
-Does this code use random operations without any seed?
+Do NOT flag:
+- Functions that accept a model or dataloader as input (they don't own initialization)
+- DataLoader construction calls (shuffle=True alone is not a seed issue)
 
-Look for:
-- np.random.randn/rand/shuffle/choice without np.random.seed anywhere in file
-- torch.randn/rand/randperm without torch.manual_seed anywhere in file
-- random.random/shuffle/choice without random.seed anywhere in file
+FIRST: Verify the code actually contains random operations. If NONE of these appear, answer NO immediately:
+  np.random.*, torch.rand*, torch.randn*, random.random*, random.shuffle, torch.randperm, np.random.shuffle, np.random.choice
 
-Safe patterns: seed set anywhere in file, function accepts seed parameter, test files
+Do NOT flag code that only:
+- Calls model.forward() or model() without training
+- Reads data from files (open(), pd.read_csv(), sdf parsing, HDF5 loading)
+- Runs in model.eval() with torch.no_grad()
+- Computes metrics from fixed predictions
 
-YES = Bug found: random operations without seed initialization in file
-NO = Correct: seed is set somewhere in file, or function accepts seed parameter
+Safe patterns (answer NO):
+- Seed set anywhere in file (np.random.seed, torch.manual_seed, random.seed)
+- np.random.default_rng(seed) or np.random.Generator with explicit seed
+- torch.Generator().manual_seed(seed) or torch.Generator with explicit seed
+- seed_everything(...), pl.seed_everything(...), or similar utility — even with dynamic/variable seeds
+- Function accepts seed parameter or random_state parameter
+- worker_init_fn that sets worker-specific seeds
+- Any __getitem__ method (Dataset subclass) — random sampling here is intentional augmentation
+- collate_fn functions — random operations are intentional per-batch augmentation
+- Any function named transform, augment, augmentation, or that accepts a sample/img/audio argument and returns a modified version — randomness here improves generalization by design
+- Code that calls time.time(), timeit, or measures memory (e.g., torch.cuda.max_memory_allocated) — random inputs are irrelevant to timing measurements
+- Classes/functions named Fake*, Dummy*, Synthetic*, Bench*, or Profil* — intentional throwaway data
+- Any torch.randn/np.random call where the output is passed directly to a model and the result is discarded or used only for timing/memory measurement
+- Test files
+
+STRONG indicator of a real bug (raises confidence):
+- Code references args.seed or config.seed in filenames, log directories, or comments BUT never calls torch.manual_seed()/np.random.seed()/random.seed() with it — the developer INTENDED reproducibility but failed to implement it
+
+YES = Bug found: random operations in a top-level training/evaluation entry point without any seed mechanism
+NO = Correct: seed set, seed parameter accepted, augmentation/benchmark context, helper function, no random ops present, or seed utility used
 """
 
 warning_message = """
@@ -63,13 +90,13 @@ false_positive_risks = [
 
 [[tests.positive]]
 file = "test_positive/no_seed_random_ops.py"
-description = "Data generation and splitting using np.random operations without any seed being set. Results will vary between runs."
+description = "Pipeline function using np.random operations for data generation and splitting without any seed being set."
 expected_issue = "Random operations (np.random.randn, np.random.uniform, np.random.permutation) used without any random seed set"
 min_confidence = 0.85
 
 [tests.positive.expected_location]
 type = "function"
-name = "generate_synthetic_data"
+name = "run_pipeline"
 snippet = "features = np.random.randn(n_samples, 50)"
 lines = [6]
 
@@ -80,10 +107,10 @@ expected_issue = "Simulation uses random operations from torch and random module
 min_confidence = 0.85
 
 [tests.positive.expected_location]
-type = "method"
-name = "__init__"
-snippet = "self.positions = torch.randn(n_agents, 2)"
-lines = [9]
+type = "function"
+name = "run_monte_carlo"
+snippet = "positions = torch.randn(n_agents, 2)"
+lines = [7]
 
 [[tests.negative]]
 file = "test_negative/seeded_data_generation.py"
@@ -97,16 +124,16 @@ description = "Monte Carlo simulation with torch.manual_seed and random.seed pro
 # === Auto-generated entries (review and update) ===
 [[tests.positive]]
 file = "test_positive/no_seed.py"
-description = "Data generation using np.random.randn without any seed initialization in the file."
-expected_issue = "np.random.randn used without np.random.seed anywhere in file"
+description = "Experiment function using numpy.random and random.shuffle for data generation and splitting without any seed set."
+expected_issue = "np.random.randn, np.random.randint, random.shuffle used without any seed initialization"
 min_confidence = 0.85
 
 [tests.positive.expected_location]
 type = "function"
-name = "generate_synthetic_data"
-snippet = "X = np.random.randn(n_samples, 10)"
-lines = [14]
+name = "main"
+snippet = "data = np.random.randn(1000, 10)"
+lines = [7]
 
 [[tests.negative]]
 file = "test_negative/with_seed.py"
-description = "Machine learning pipeline with proper reproducibility using seed parameters (random_state for train_test_split and RandomForestClassifier, np.random.RandomState for synthetic data)."
+description = "Reproducible experiment using np.random.default_rng(seed) via config dataclass for seeded data generation."

@@ -56,15 +56,15 @@ false_positive_risks = []
 
 [[tests.positive]]
 file = "test_positive/dataloader_no_init.py"
-description = "DataLoader with workers but no worker_init_fn"
+description = "DataLoader with workers but no worker_init_fn, Dataset uses np.random.randn in __getitem__"
 expected_issue = "DataLoader(num_workers>0) without worker_init_fn"
 min_confidence = 0.85
 
 [tests.positive.expected_location]
 type = "function"
-name = "create_dataloader"
-snippet = "num_workers"
-lines = [19, 24]
+name = "get_train_loader"
+snippet = "DataLoader(dataset"
+lines = [24]
 
 [[tests.negative]]
 file = "test_negative/single_worker.py"
@@ -72,11 +72,11 @@ description = "DataLoader with num_workers=0"
 
 [[tests.negative]]
 file = "test_negative/deterministic_augmentation.py"
-description = "Deterministic augmentation (no random)"
+description = "DataLoader with workers but only deterministic transforms (Normalize) — no random ops in Dataset, so no worker_init_fn needed"
 
 [[tests.negative]]
 file = "test_negative/proper_worker_init.py"
-description = "DataLoader with worker_init_fn for proper seeding"
+description = "DataLoader with worker_init_fn for proper seeding, uses seed_worker and torch.Generator for full reproducibility"
 
 # === Auto-generated entries (review and update) ===
 [[tests.positive]]

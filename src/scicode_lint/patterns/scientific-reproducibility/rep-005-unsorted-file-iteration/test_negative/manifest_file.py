@@ -26,13 +26,3 @@ def process_ordered_splits(config_path):
         data = np.load(split["path"])
         results.append(data)
     return results
-
-
-class DatasetLoader:
-    def __init__(self, index_file):
-        with open(index_file) as f:
-            self.file_list = [line.strip() for line in f]
-
-    def __iter__(self):
-        for filepath in self.file_list:
-            yield np.load(filepath)

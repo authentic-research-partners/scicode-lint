@@ -64,7 +64,7 @@ min_confidence = 0.85
 type = "class"
 name = "AnomalyDetector"
 snippet = "self.accuracy = accuracy_score(y_test, y_pred)"
-lines = [19, 34, 35]
+lines = [19]
 
 [[tests.negative]]
 file = "test_negative/appropriate_metrics_imbalanced.py"

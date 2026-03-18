@@ -27,18 +27,21 @@ references = [
 question = """
 Is this PRODUCTION INFERENCE code using torch.no_grad() instead of torch.inference_mode()?
 
-KEY DISTINCTION:
-- PRODUCTION INFERENCE: API endpoints, model serving, standalone prediction scripts
-- TRAINING VALIDATION: evaluate/validation functions in training pipelines (no_grad is fine here)
+KEY DISTINCTION — three categories:
+1. PRODUCTION INFERENCE: API endpoints, model serving, standalone prediction scripts → use inference_mode()
+2. TRAINING VALIDATION: evaluate/validation functions in training pipelines → no_grad() is fine
+3. GRADIENT-BASED ANALYSIS: saliency maps, GradCAM, adversarial examples → no_grad() is fine (needs gradient tracking)
 
-How to tell the difference:
-- If the file has model.train() or optimizer.step() anywhere → it's training code, no_grad() is OK
-- If the file is an API/serving endpoint with no training code → production inference, use inference_mode()
+FIRST CHECK (function-level): Does this function call .backward() or set requires_grad=True anywhere?
+→ If YES, it's gradient-based analysis code. Answer NO.
 
-Does this file contain PRODUCTION SERVING code (no training) using no_grad()?
+SECOND CHECK (file-level): Does the file have model.train(), optimizer.step(), or training loop code?
+→ If YES, it's training code. Answer NO.
 
-YES = Production inference API/serving code using no_grad() instead of inference_mode()
-NO = Training validation (file has training code), or already uses inference_mode()
+If NEITHER: this is production inference. Does it use no_grad() instead of inference_mode()?
+
+YES = Production inference (no training code, no gradient analysis) using no_grad() instead of inference_mode()
+NO = Training validation, gradient-based analysis (.backward() or requires_grad=True present), or already uses inference_mode()
 """
 
 warning_message = """
@@ -46,7 +49,10 @@ torch.inference_mode() is faster than no_grad() for production inference. Use in
 """
 
 min_confidence = 0.85
-false_positive_risks = []
+false_positive_risks = [
+    "Training pipelines with validation phases where no_grad() is used correctly during model.eval() validation loops — the file contains optimizer.step(), loss.backward(), and model.train() calls indicating training code",
+    "Evaluation callbacks or metric computation functions that are part of a larger training workflow — no_grad() is appropriate because the training context may resume gradient computation afterward",
+]
 
 [tests]
 
@@ -63,8 +69,12 @@ snippet = "with torch.no_grad():"
 lines = [19]
 
 [[tests.negative]]
-file = "test_negative/training_validation.py"
-description = "Training validation using no_grad() appropriately"
+file = "test_negative/training_with_validation.py"
+description = "Training pipeline with validation phase using no_grad() correctly - file has optimizer.step(), loss.backward(), model.train()"
+
+[[tests.negative]]
+file = "test_negative/gradient_analysis.py"
+description = "GradCAM and saliency map code using backward() and requires_grad - no_grad() is fine in gradient analysis"
 
 [[tests.negative]]
 file = "test_negative/scripted_model_inference.py"

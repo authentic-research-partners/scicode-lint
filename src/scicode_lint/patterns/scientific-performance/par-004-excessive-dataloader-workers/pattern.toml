@@ -1,11 +1,11 @@
-# Pattern: par-004-pattern
+# Pattern: par-004-excessive-dataloader-workers
 # Auto-migrated from YAML catalog on 2026-03-03
 
 [meta]
 id = "par-004"
 name = "excessive-dataloader-workers"
 category = "scientific-performance"
-severity = "high"
+severity = "medium"
 version = "1.0.0"
 created = "2024-01-15"
 updated = "2026-03-03"
@@ -17,7 +17,6 @@ Setting DataLoader num_workers too high (e.g., >8 or more than CPU cores) causes
 
 explanation = """
 num_workers too high: each worker duplicates the dataset in memory. Too many workers causes OOM or thrashing. Start with 4 and increase while monitoring memory.
-
 """
 
 tags = []
@@ -29,26 +28,27 @@ references = [
 
 [detection]
 question = """
-Analyze DataLoader configuration for worker count.
+Analyze DataLoader configuration for excessive worker count.
 
-Setting num_workers too high (>8 or more than CPU cores) causes each worker to duplicate the dataset in memory. This leads to OOM errors or thrashing as workers compete for memory and CPU.
+Setting num_workers too high causes each worker to duplicate the dataset in memory, leading to OOM errors or thrashing. The safe range depends on the machine, but hardcoded values above 16 are almost always excessive.
 
-Correct approach: Start with num_workers=4, increase while monitoring memory.
-
-Does this code use excessive DataLoader workers?
+Does this code set DataLoader num_workers to an excessively high hardcoded value?
 
 Look for:
-- num_workers=32 or other high fixed values
-- num_workers = cpu_count() * 2 or similar
-- num_workers > 8 without memory considerations
+- num_workers set to a hardcoded value > 16 (e.g., num_workers=32, num_workers=48)
+- num_workers = cpu_count() * N where the multiplier is >= 2
 
-YES = Bug found: num_workers too high (>8 or > CPU cores)
-NO = Correct: reasonable worker count (2-8), or dynamically limited
+NOT a bug (answer NO):
+- num_workers in range 1-8 (safe for most machines)
+- Adaptive calculation with a reasonable cap: min(N, cpu_count() // 2)
+- num_workers read from config or environment variable
+
+YES = Bug found: num_workers hardcoded to an excessively high value (>16) or set to an unbounded CPU multiplier
+NO = Correct: reasonable fixed value (1-8), adaptively capped, or configurable
 """
 
 warning_message = """
 num_workers too high: each worker duplicates the dataset in memory. Too many workers causes OOM or thrashing. Start with 4 and increase while monitoring memory.
-
 """
 
 min_confidence = 0.85
@@ -102,5 +102,5 @@ snippet = "num_workers=48"
 lines = [36]
 
 [[tests.negative]]
-file = "test_negative/cpu_adaptive.py"
-description = "DataLoader with adaptive num_workers capped at safe value (min of 4 and cpu_count//2) - properly limits memory usage"
+file = "test_negative/configurable_workers.py"
+description = "DataLoader num_workers read from environment variable - configurable per deployment"
