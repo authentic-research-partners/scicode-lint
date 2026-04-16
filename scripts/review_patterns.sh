@@ -59,10 +59,9 @@ ${GREEN}Direct Claude Code Usage:${NC}
 
   claude --agent pattern-reviewer "Review ml-001-scaler-leakage"
 
-${GREEN}Documentation:${NC}
-  - Quick Start: .claude/agents/pattern-reviewer/QUICK_START.md
-  - Examples: .claude/agents/pattern-reviewer/examples.md
-  - Full Docs: .claude/agents/pattern-reviewer/README.md
+${GREEN}Agent files:${NC}
+  - Prompt:     pattern_verification/pattern-reviewer/system_prompt.md
+  - Metadata:   pattern_verification/pattern-reviewer/agent.json
 
 EOF
 }

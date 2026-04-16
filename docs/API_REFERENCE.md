@@ -369,6 +369,25 @@ error_dict = result.error.to_dict()
 
 ## Exceptions
 
+All documented linter failures inherit from `SciCodeLintError`. Catch the base
+class to cover every case in one handler; catch specific subclasses when you
+need branch-specific logic.
+
+```python
+from scicode_lint.exceptions import SciCodeLintError, LLMConnectionError
+from scicode_lint.linter import NotebookParseError
+from scicode_lint.llm.client import MissingLocationError
+from scicode_lint.llm.exceptions import ContextLengthError
+```
+
+| Exception               | Raised when                                                    |
+|-------------------------|----------------------------------------------------------------|
+| `SciCodeLintError`      | Base class — catch this to handle any of the below uniformly   |
+| `LLMConnectionError`    | vLLM server unreachable on any expected port                   |
+| `ContextLengthError`    | Input exceeds model context window (has structured `to_dict()`) |
+| `NotebookParseError`    | Jupyter notebook cannot be parsed                              |
+| `MissingLocationError`  | LLM returned `detected=yes` but no location (surfaces only if retries exhaust) |
+
 ### ContextLengthError
 
 Raised when input exceeds model's context length.

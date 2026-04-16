@@ -11,7 +11,7 @@ import argparse
 import asyncio
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from loguru import logger
 from pydantic import BaseModel, Field
@@ -33,13 +33,32 @@ class AbstractFilterResult(BaseModel):
     confidence: float = Field(
         description="Confidence in the classification (0.0 to 1.0)", ge=0.0, le=1.0
     )
-    science_domain: str = Field(
-        description="Scientific domain: biology, chemistry, medicine, physics, materials, neuroscience, earth_science, astronomy, or 'none' if not science"
+    science_domain: Literal[
+        "biology",
+        "chemistry",
+        "medicine",
+        "physics",
+        "materials",
+        "neuroscience",
+        "earth_science",
+        "astronomy",
+        "economics",
+        "social_science",
+        "engineering",
+        "none",
+    ] = Field(description="Scientific domain, or 'none' if not applied to science")
+    application_type: Literal[
+        "prediction",
+        "analysis",
+        "discovery",
+        "simulation",
+        "diagnosis",
+        "methodology",
+    ] = Field(description="What the AI/ML is used for; 'methodology' if pure ML research")
+    explanation: str = Field(
+        max_length=400,
+        description="Brief explanation of the decision (1-2 sentences)",
     )
-    application_type: str = Field(
-        description="What the AI/ML is used for: prediction, analysis, discovery, simulation, diagnosis, or 'methodology' if pure ML"
-    )
-    explanation: str = Field(description="Brief explanation of the decision")
 
 
 # Abstract filter prompt - identifies AI applied to science with categorization
@@ -110,6 +129,8 @@ async def check_paper_with_llm(
                 system_prompt=SYSTEM_PROMPT,
                 user_prompt=prompt,
                 schema=AbstractFilterResult,
+                thinking_budget=200,
+                thinking_effort=0.3,
             )
 
             title = paper.get("title", "")[:50]

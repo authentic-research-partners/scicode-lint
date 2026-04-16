@@ -53,7 +53,7 @@ All development-time Claude CLI calls go through the shared `dev_lib.ClaudeCLI` 
 
 The **pattern-reviewer** agent in `pattern_verification/pattern-reviewer/` uses SOTA models to identify issues in pattern definitions. Fixes are implemented directly in your Claude Code session.
 
-See [pattern_verification/README.md](../pattern_verification/README.md) for the complete verification workflow.
+See [pattern_verification/README.md](../../pattern_verification/README.md) for the complete verification workflow.
 
 **The key insight**: Invest upfront in high-quality pattern design (using SOTA models) so the local model can reliably execute simple instructions at runtime.
 
@@ -67,7 +67,7 @@ We use Qwen3, a thinking model that reasons through problems. Detection question
 
 **Think of it as: "Would a junior developer following these exact instructions catch this bug?"**
 
-**📖 Pattern guide:** [patterns/README.md](../src/scicode_lint/patterns/README.md)
+**📖 Pattern guide:** [patterns/README.md](../../src/scicode_lint/patterns/README.md)
 
 This principle affects everything else in this document - all architectural decisions support reliable detection with a constrained-capacity local model.
 
@@ -656,15 +656,23 @@ def test_numpy_indexing_pattern():
 
 Uses **OpenAI-compatible API** for ease of use.
 
-### Critical: Thinking Models Require `guided_json`
+### Container-Only vLLM (Podman/Docker)
 
-**⚠️ Never use `response_format: json_schema` with Qwen3 (or models with visible thinking tokens).**
+**Principle:** vLLM runs in a container, not as a Python dependency. `scicode-lint vllm-server start` launches `docker.io/vllm/vllm-openai` via podman (preferred) or docker, with GPU passthrough via CDI spec (`--device nvidia.com/gpu=all`).
 
-It skips the `<think>` reasoning phase, dropping accuracy from ~99% to ~78%.
+**Why container-only:**
+- **Version pinning.** The container image tag pins the exact vLLM version, avoiding native-install drift where `pip install vllm` could resolve to a different version than what tests validate against.
+- **No Python env pollution.** `pip install vllm` adds ~2 GB to the environment and couples the linter's dependency tree to vLLM's. Keeping vLLM out of `pyproject.toml` keeps install lightweight.
+- **Reasoning flag lag.** New vLLM features (e.g. `--reasoning-parser qwen3`) reach released images faster than they reach the native `pip install vllm` surface that projects tend to pin transitively.
+- **GPU passthrough is free.** CDI-based GPU access adds no measurable inference overhead versus a native process; the only cost is ~1s container startup.
 
-Always use `guided_json` in `extra_body` instead. vLLM's XGrammar/Outlines backend is enabled by default.
+**Single-model scope.** The container wrapper intentionally supports one model at a time. Multi-model container management (vision models, multi-stage pipelines, batch scheduling) adds complexity that scicode-lint's single-file detection flow doesn't need. If multi-model is ever required, re-evaluate the scope — don't graft it onto the single-model path.
 
-**📖 Full explanation:** See module docstring in `src/scicode_lint/llm/client.py`
+### Structured Output with Qwen3
+
+Uses `response_format: json_schema` (OpenAI-standard API) for constrained decoding via vLLM's XGrammar backend. Qwen3's reasoning parser (`--reasoning-parser qwen3`) separates thinking from JSON server-side. This flag is Qwen3-specific — other models need their own parser or none at all.
+
+**📖 Full explanation:** See `src/scicode_lint/llm/CONSTRAINED_DECODING.md`
 
 ---
 
@@ -1163,7 +1171,7 @@ Key architectural decisions:
 7. **Minimize false positives** - Conservative > noisy
 8. **Keep it simple** - Modern Python, minimal dependencies
 9. **Local-first** - Privacy, cost, speed, reproducibility
-   - **Thinking models need `guided_json`** - Never use `response_format: json_schema` (skips reasoning, drops accuracy from 99% to 78%)
+   - **Structured output** - Uses `response_format: json_schema` + Qwen3 reasoning parser (server-side thinking separation)
 10. **20K total context** (16K input + 4K response) - Empirically sized for 90-95% coverage based on 10M+ repository analysis
     - **Efficient allocation** - vLLM paged attention means no waste on smaller files
     - **Configurable** - Values set in config.toml, not hardcoded

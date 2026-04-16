@@ -520,7 +520,7 @@ The `lines` field serves as:
 - Only list lines within the named function — never across function boundaries
 - The linter reports one `focus_line`; evals check if it falls within these expected lines
 
-**Note:** The linter's LLM outputs a name-based location (function name + approximate line), which is then resolved to exact lines via AST. See [DETECTION_ARCHITECTURE.md](../../../docs_dev_genai/DETECTION_ARCHITECTURE.md) for details.
+**Note:** The linter's LLM outputs a name-based location (function name + approximate line), which is then resolved to exact lines via AST. See [DETECTION_ARCHITECTURE.md](../../../docs/dev/DETECTION_ARCHITECTURE.md) for details.
 
 Negative tests should NOT have `expected_location` (no bug to locate).
 
@@ -664,4 +664,4 @@ python pattern_verification/semantic/semantic_validate.py --all
 - [pattern_verification/](../../../pattern_verification/) - Complete verification guide (deterministic + semantic)
 - [evals/](../../../evals/) - Evaluation frameworks
 - [CONTRIBUTING.md](../../../CONTRIBUTING.md) - How to contribute patterns
-- [ARCHITECTURE.md](../../../docs_dev_genai/ARCHITECTURE.md) - Design principles
+- [ARCHITECTURE.md](../../../docs/dev/ARCHITECTURE.md) - Design principles

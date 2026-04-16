@@ -37,8 +37,6 @@ Example - System Info:
     >>> gpu = get_gpu_info()
     >>> print(f"Free VRAM: {gpu.free_memory_mb} MB")
     >>> print_system_info()  # Print complete system status
-
-Also includes start_vllm.sh bash script for manual server startup.
 """
 
 import asyncio
@@ -51,9 +49,6 @@ from typing import Any
 
 import httpx
 
-# Fallback model name (used only if model not specified in config)
-_DEFAULT_MODEL_FALLBACK = "RedHatAI/Qwen3-8B-FP8-dynamic"
-
 
 def _get_vllm_config() -> dict[str, Any]:
     """Get vLLM config from config.toml. Fails if config cannot be loaded."""
@@ -64,25 +59,39 @@ def _get_vllm_config() -> dict[str, Any]:
     return result
 
 
-def _get_llm_config_value(key: str, default: Any) -> Any:
-    """Get a value from [llm] section of config.toml. Fails if config cannot be loaded."""
+def _get_llm_config_required(key: str) -> Any:
+    """Get a required value from [llm] section of config.toml.
+
+    Fails loudly if the key is missing — no hardcoded fallback.
+    """
     from scicode_lint.config import load_config_from_toml
 
     config = load_config_from_toml()
-    return config.get("llm", {}).get(key, default)
+    llm_section = config.get("llm", {})
+    if key not in llm_section:
+        raise RuntimeError(
+            f"Required key '[llm].{key}' missing from config.toml. "
+            "Bundled config should define this; reinstall scicode-lint if config is corrupted."
+        )
+    return llm_section[key]
 
 
 def _get_default_model() -> str:
-    """Get default model from config.toml or fallback."""
-    result: str = _get_llm_config_value("model", _DEFAULT_MODEL_FALLBACK)
+    """Get model name from config.toml. Fails loudly if not set."""
+    result: str = _get_llm_config_required("model")
     return result
 
 
 def _get_default_max_model_len() -> int:
-    """Get max_model_len from config.toml (computed from max_input + max_completion)."""
-    max_input: int = _get_llm_config_value("max_input_tokens", 16000)
-    max_completion: int = _get_llm_config_value("max_completion_tokens", 4096)
-    return max_input + max_completion
+    """Get max_model_len from [vllm] section of config.toml.
+
+    This is the vLLM server's sequence-length ceiling, not a pre-allocation.
+    PagedAttention allocates KV cache on demand, so the value only matters when
+    a request's total tokens would exceed it (vLLM rejects the request).
+    Default: 40960 (Qwen3-8B native max_position_embeddings).
+    """
+    vllm_config = _get_vllm_config()
+    return int(vllm_config.get("max_model_len", 40960))
 
 
 def _get_min_vram_mb() -> int:
@@ -99,6 +108,18 @@ def _get_gpu_memory_utilization() -> float:
     if "gpu_memory_utilization" not in vllm_config:
         raise KeyError("gpu_memory_utilization not found in [vllm] section of config.toml")
     return float(vllm_config["gpu_memory_utilization"])
+
+
+def _get_reasoning_parser() -> str:
+    """Get reasoning parser from config.toml.
+
+    Returns:
+        Parser name (e.g., "qwen3") or empty string if disabled.
+        Qwen3-specific: separates <think> blocks from JSON server-side.
+        Other thinking models need their own parser (e.g., "deepseek").
+    """
+    vllm_config = _get_vllm_config()
+    return str(vllm_config.get("reasoning_parser", "qwen3"))
 
 
 def is_running(base_url: str = "http://localhost:5001") -> bool:
@@ -152,212 +173,11 @@ def wait_for_ready(
     return False
 
 
-def _check_vllm_version() -> None:
-    """Check if vLLM version is 0.16+ and raise if not."""
-    try:
-        result = subprocess.run(
-            ["vllm", "--version"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        # Parse version from output like "vllm 0.16.0"
-        import re
-
-        match = re.search(r"vllm (\d+)\.(\d+)", result.stdout + result.stderr)
-        if match:
-            major, minor = int(match.group(1)), int(match.group(2))
-            if major == 0 and minor < 16:
-                raise RuntimeError(
-                    f"vLLM version 0.{minor}.x is too old (requires 0.16+). "
-                    "Upgrade with: pip install --upgrade vllm"
-                )
-    except (FileNotFoundError, subprocess.CalledProcessError):
-        # vllm command not found or failed - will be caught by start_server
-        pass
-
-
-def _auto_detect_vram_settings(override_vram_mb: int | None = None) -> tuple[int, float]:
-    """Verify VRAM requirements and return settings from config.
-
-    Args:
-        override_vram_mb: Override VRAM detection for testing (e.g., 16384 for 16GB)
-
-    Returns:
-        Tuple of (max_model_len, gpu_memory_utilization) from config.toml
-    """
-    # Get config values
-    min_vram_mb = _get_min_vram_mb()
-    max_model_len = _get_default_max_model_len()
-    gpu_mem_util = _get_gpu_memory_utilization()
-
-    if override_vram_mb is not None:
-        vram_mb = override_vram_mb
-    else:
-        gpu_info = get_gpu_info()
-        if gpu_info is None:
-            # Cannot detect VRAM - require user to specify
-            min_vram_gb = min_vram_mb // 1024
-            raise RuntimeError(
-                "Cannot detect GPU VRAM. Please ensure nvidia-smi is available.\n"
-                f"Minimum requirement: {min_vram_gb}GB VRAM with native FP8 support"
-            )
-        vram_mb = gpu_info.total_memory_mb
-
-    # Enforce minimum VRAM from config
-    if vram_mb < min_vram_mb:
-        vram_gb = vram_mb // 1024
-        min_vram_gb = min_vram_mb // 1024
-        raise RuntimeError(
-            f"Detected {vram_gb}GB VRAM. Minimum requirement: {min_vram_gb}GB VRAM.\n"
-            "\n"
-            f"scicode-lint requires {min_vram_gb}GB+ VRAM with native FP8 support.\n"
-            "Supported GPUs (compute capability >= 8.9):\n"
-            "  • Consumer: RTX 4060 Ti 16GB, RTX 4070+ (16GB+), RTX 4090 (24GB)\n"
-            "  • Workstation: RTX 4000 Ada (20GB), RTX 5000 Ada (32GB)\n"
-            "  • Cloud/HPC inference: L4 (24GB), L40 (48GB), A10 (24GB)\n"
-            "\n"
-            "See INSTALLATION.md for deployment options."
-        )
-
-    # Return settings from config
-    # max_model_len: total context (input + output)
-    # gpu_mem_util: fraction of VRAM to use
-    return max_model_len, gpu_mem_util
-
-
-def start_server(
-    model: str | None = None,
-    port: int = 5001,
-    max_model_len: int | None = None,
-    gpu_memory_utilization: float | None = None,
-    wait: bool = False,
-    wait_timeout: int = 60,
-) -> subprocess.Popen[bytes]:
-    """Start vLLM server as a subprocess.
-
-    Args:
-        model: Model name or path (default: from config.toml)
-        port: Port to run on (default: 5001)
-        max_model_len: Maximum context length (default: ~20K tokens)
-        gpu_memory_utilization: GPU memory to use 0.0-1.0 (default: from config.toml)
-        wait: Wait for server to be ready before returning (default: False)
-        wait_timeout: Timeout for waiting in seconds (default: 60)
-
-    Returns:
-        subprocess.Popen object representing the server process
-
-    Raises:
-        FileNotFoundError: If vllm command not found
-        TimeoutError: If wait=True and server doesn't start in time
-        RuntimeError: If server is already running on the port
-
-    Example:
-        >>> from scicode_lint.vllm import start_server, stop_server
-        >>> proc = start_server(wait=True)  # Auto-detects VRAM settings
-        >>> try:
-        ...     # Use linter
-        ...     linter = SciCodeLinter()
-        ...     result = linter.check_file(Path("myfile.py"))
-        ... finally:
-        ...     stop_server(proc)
-
-    Note:
-        Model will download automatically on first run (~13GB).
-        Server output goes to stdout/stderr unless redirected.
-    """
-    # Check vLLM version
-    _check_vllm_version()
-
-    # Use default model from config if not specified
-    if model is None:
-        model = _get_default_model()
-
-    # Check if already running
-    if is_running(f"http://localhost:{port}"):
-        raise RuntimeError(
-            f"vLLM server already running on port {port}\n\n"
-            f"Suggestions:\n"
-            f"  • Use existing server: scicode-lint will auto-detect it\n"
-            f"  • Stop server: Use stop_server() or kill the vllm process\n"
-            f"  • Use different port: start_server(port={port + 1})"
-        )
-
-    # Auto-detect settings if not specified
-    if max_model_len is None or gpu_memory_utilization is None:
-        auto_len, auto_mem = _auto_detect_vram_settings()
-        if max_model_len is None:
-            max_model_len = auto_len
-        if gpu_memory_utilization is None:
-            gpu_memory_utilization = auto_mem
-
-    # Build command (model is positional arg after 'serve')
-    cmd = [
-        "vllm",
-        "serve",
-        model,
-        "--host",
-        "0.0.0.0",
-        "--port",
-        str(port),
-        "--trust-remote-code",
-        "--gpu-memory-utilization",
-        str(gpu_memory_utilization),
-        "--max-model-len",
-        str(max_model_len),
-    ]
-
-    # Start process (output goes to /dev/null — use vLLM's own logging)
-    try:
-        proc = subprocess.Popen(
-            cmd,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-    except FileNotFoundError:
-        raise FileNotFoundError(
-            "vllm command not found. Install with: pip install scicode-lint[vllm-server]"
-        )
-
-    # Wait for ready if requested
-    if wait:
-        if not wait_for_ready(f"http://localhost:{port}", timeout=wait_timeout):
-            stop_server(proc)
-            raise TimeoutError(f"Server failed to start within {wait_timeout} seconds")
-
-    return proc
-
-
-def stop_server(process: subprocess.Popen[bytes], timeout: int = 10) -> None:
-    """Stop vLLM server process gracefully.
-
-    Args:
-        process: Process object returned by start_server()
-        timeout: Timeout for graceful shutdown in seconds (default: 10)
-
-    Example:
-        >>> from scicode_lint.vllm import start_server, stop_server
-        >>> proc = start_server()
-        >>> # ... use server ...
-        >>> stop_server(proc)
-
-    Note:
-        Tries graceful termination first, then kills if necessary.
-    """
-    if process.poll() is None:  # Process still running
-        process.terminate()
-        try:
-            process.wait(timeout=timeout)
-        except subprocess.TimeoutExpired:
-            process.kill()
-            process.wait()
-
-
 class VLLMServer:
     """Context manager for vLLM server lifecycle.
 
     Supports both local and remote vLLM servers:
-    - **Local server (default)**: Starts if not running, stops if we started it
+    - **Local server (default)**: Starts container if not running, stops if we started it
     - **Remote server**: Only verifies it's reachable, never starts/stops
 
     Args:
@@ -365,15 +185,13 @@ class VLLMServer:
         port: Port to run on (only used for local servers)
         base_url: Full URL for remote server (e.g., "http://10.0.0.5:5001")
                   If provided, port is ignored and no start/stop attempted
-        max_model_len: Maximum context length (local servers only, default: ~20K)
-        gpu_memory_utilization: GPU memory 0.0-1.0 (local servers only, default: from config.toml)
         wait_timeout: Timeout for server startup/verification in seconds
 
     Example - Local server (auto-start):
         >>> from scicode_lint.vllm import VLLMServer
         >>> from scicode_lint import SciCodeLinter
         >>>
-        >>> # Starts local server if not running, stops when done
+        >>> # Starts local container if not running, stops when done
         >>> with VLLMServer():
         ...     linter = SciCodeLinter()
         ...     result = linter.check_file(Path("myfile.py"))
@@ -390,44 +208,22 @@ class VLLMServer:
         model: str | None = None,
         port: int = 5001,
         base_url: str | None = None,
-        max_model_len: int | None = None,
-        gpu_memory_utilization: float | None = None,
-        wait_timeout: int = 60,
+        wait_timeout: int = 120,
     ):
         """Initialize VLLMServer context manager.
 
-        Uses settings from config.toml: 20K context, GPU memory utilization.
-        Model defaults to value from config.toml.
+        Uses settings from config.toml. Model defaults to config value.
         """
         self.model = model if model is not None else _get_default_model()
         self.port = port
         self.base_url = base_url
-
-        # Verify VRAM requirements and use standard settings (only for local servers)
-        if base_url is None and (max_model_len is None or gpu_memory_utilization is None):
-            auto_len, auto_mem = _auto_detect_vram_settings()
-            self.max_model_len = max_model_len if max_model_len is not None else auto_len
-            self.gpu_memory_utilization = (
-                gpu_memory_utilization if gpu_memory_utilization is not None else auto_mem
-            )
-        else:
-            # Use provided values or fallback to config defaults
-            self.max_model_len = (
-                max_model_len if max_model_len is not None else _get_default_max_model_len()
-            )
-            self.gpu_memory_utilization = (
-                gpu_memory_utilization
-                if gpu_memory_utilization is not None
-                else _get_gpu_memory_utilization()
-            )
-
         self.wait_timeout = wait_timeout
-        self.process: subprocess.Popen[bytes] | None = None
+        self.we_started = False
         self.was_already_running = False
         self.is_remote = base_url is not None
 
     def __enter__(self) -> "VLLMServer":
-        """Start vLLM server if local and not already running."""
+        """Start vLLM container if local and not already running."""
         server_url = self.base_url or f"http://localhost:{self.port}"
 
         # Check if server already running
@@ -442,7 +238,6 @@ class VLLMServer:
                         data = response.json()
                         if "data" in data and len(data["data"]) > 0:
                             running_model = data["data"][0].get("id", "unknown")
-                            # Check if models differ (ignoring served-model-name aliases)
                             if self.model not in running_model and running_model not in self.model:
                                 import warnings
 
@@ -450,7 +245,7 @@ class VLLMServer:
                                     f"Local vLLM server is running with model "
                                     f"'{running_model}' but you requested '{self.model}'. "
                                     f"Using existing server. To use the requested model, "
-                                    f"stop the server first: pkill -f 'vllm serve'"
+                                    f"stop the server first: scicode-lint vllm-server stop"
                                 )
                                 warnings.warn(msg, RuntimeWarning)
                 except (httpx.HTTPError, KeyError, IndexError):
@@ -465,15 +260,26 @@ class VLLMServer:
                 "Cannot start remote servers - please start it manually."
             )
 
-        # Start local server
-        self.process = start_server(
-            model=self.model,
-            port=self.port,
-            max_model_len=self.max_model_len,
-            gpu_memory_utilization=self.gpu_memory_utilization,
-            wait=True,
-            wait_timeout=self.wait_timeout,
-        )
+        # Start local container
+        from scicode_lint.vllm.container import start_container
+
+        exit_code = start_container(model=self.model, port=self.port)
+        if exit_code != 0:
+            raise RuntimeError(
+                "Failed to start vLLM container. Check logs with: scicode-lint vllm-server logs"
+            )
+
+        # Wait for API to be ready
+        if not wait_for_ready(server_url, timeout=self.wait_timeout):
+            from scicode_lint.vllm.container import stop_container
+
+            stop_container()
+            raise TimeoutError(
+                f"Container started but vLLM server not ready within {self.wait_timeout}s. "
+                "Check logs with: scicode-lint vllm-server logs"
+            )
+
+        self.we_started = True
         return self
 
     def __exit__(
@@ -482,10 +288,11 @@ class VLLMServer:
         exc_val: BaseException | None,
         exc_tb: types.TracebackType | None,
     ) -> None:
-        """Stop vLLM server only if we started it (local only)."""
-        # Only stop if we started the server (don't kill existing/remote servers)
-        if self.process and not self.was_already_running and not self.is_remote:
-            stop_server(self.process)
+        """Stop vLLM container only if we started it (local only)."""
+        if self.we_started and not self.was_already_running and not self.is_remote:
+            from scicode_lint.vllm.container import stop_container
+
+            stop_container()
 
 
 @dataclass
@@ -807,8 +614,6 @@ def print_system_info() -> None:
 
 
 __all__ = [
-    "start_server",
-    "stop_server",
     "wait_for_ready",
     "is_running",
     "VLLMServer",

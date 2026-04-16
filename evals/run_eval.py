@@ -14,6 +14,7 @@ from typing import Any, Literal
 
 from loguru import logger
 
+from scicode_lint.exceptions import ConfigError
 from scicode_lint.llm.client import LLMClient
 
 # Handle both module and script execution
@@ -69,7 +70,7 @@ class LLMJudgeEvaluator:
         self,
         llm_client: LLMClient,
         patterns_dir: Path,
-        max_concurrent: int = 150,
+        max_concurrent: int = 60,
         skip_judge: bool = False,
     ):
         """
@@ -628,7 +629,12 @@ async def main() -> int:
     """Main evaluation runner."""
     # Load config for defaults
     config = load_config_from_toml()
-    default_max_concurrent = config.get("performance", {}).get("max_concurrent_evals", 150)
+    if "performance" not in config or "max_concurrent_evals" not in config["performance"]:
+        raise ConfigError(
+            "config.toml is missing [performance].max_concurrent_evals — "
+            "required for eval concurrency"
+        )
+    default_max_concurrent = config["performance"]["max_concurrent_evals"]
 
     parser = argparse.ArgumentParser(
         description="Run LLM-as-judge evaluation for scicode-lint patterns"

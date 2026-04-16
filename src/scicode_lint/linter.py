@@ -12,6 +12,7 @@ from scicode_lint.ast_utils import resolve_name_with_fallback
 from scicode_lint.config import LinterConfig, get_default_config, get_strip_comments
 from scicode_lint.detectors.catalog import DetectionCatalog, DetectionPattern
 from scicode_lint.detectors.prompts import generate_detection_prompt, get_system_prompt
+from scicode_lint.exceptions import LLMConnectionError, SciCodeLintError
 from scicode_lint.llm.client import create_client
 from scicode_lint.llm.exceptions import ContextLengthError
 from scicode_lint.llm.models import DetectionResult
@@ -27,7 +28,7 @@ from scicode_lint.output.formatter import (
 from scicode_lint.preprocessing.comments import strip_comments
 
 
-class NotebookParseError(Exception):
+class NotebookParseError(SciCodeLintError):
     """Raised when a Jupyter notebook cannot be parsed."""
 
 
@@ -298,6 +299,12 @@ class SciCodeLinter:
 
         for pattern, result in zip(patterns_to_check, results):
             if isinstance(result, Exception):
+                # LLMConnectionError is systemic (server unreachable) — not a
+                # per-pattern failure. Bubble it up so the CLI can surface a
+                # single clear error and exit with code 2 instead of pretending
+                # the file was linted "successfully with N pattern failures".
+                if isinstance(result, LLMConnectionError):
+                    raise result
                 patterns_failed += 1
                 if isinstance(result, asyncio.TimeoutError):
                     error_type = "timeout"

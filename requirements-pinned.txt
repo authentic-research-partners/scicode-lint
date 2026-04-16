@@ -1,0 +1,41 @@
+# Pinned versions of scicode-lint's top-level dependencies.
+#
+# This file pins ONLY the packages declared in pyproject.toml (runtime + all
+# optional extras). Transitive dependencies are NOT pinned — pip will resolve
+# them within each top-level package's own constraints.
+#
+# Purpose: reproduce the exact versions of packages that scicode-lint is
+# actively developed and tested against. Generated from the maintainer's
+# working `scicode` conda env via `pip freeze`, filtered to declared deps.
+#
+# Regenerate with:
+#   python scripts/regenerate_pinned_requirements.py
+#
+# Install with:
+#   pip install -r requirements-pinned.txt
+#   pip install -e . --no-deps
+#
+# See INSTALLATION.md → "Reproducible Environment" for details.
+
+aiolimiter==1.2.1
+altair==6.0.0
+bandit==1.9.4
+datasets==4.7.0
+httpx==0.28.1
+loguru==0.7.3
+mypy==1.19.1
+nvidia-ml-py==13.590.48
+openai==2.24.0
+pandas==2.3.3
+pip_audit==2.10.0
+pydantic-settings==2.13.1
+pydantic==2.12.5
+pytest-asyncio==1.3.0
+pytest-xdist==3.8.0
+pytest==9.0.3
+PyYAML==6.0.3
+rich==14.3.3
+ruff==0.15.5
+safety==3.7.0
+streamlit==1.55.0
+types-PyYAML==6.0.12.20250915

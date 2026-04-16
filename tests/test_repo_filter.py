@@ -10,10 +10,10 @@ from scicode_lint.repo_filter.classify import (
     FileClassification,
 )
 from scicode_lint.repo_filter.scan import (
-    ML_IMPORT_KEYWORDS,
     RepoScanSummary,
     ScanResult,
     filter_scan_results,
+    get_ml_import_keywords,
     has_ml_imports,
 )
 
@@ -352,22 +352,23 @@ class TestPrompts:
 
 
 class TestMLImportKeywords:
-    """Tests for ML_IMPORT_KEYWORDS constant."""
+    """Tests for ML import keyword loading from config.toml."""
 
     def test_essential_frameworks_present(self) -> None:
-        """Essential ML frameworks should be in indicators."""
-        assert "sklearn" in ML_IMPORT_KEYWORDS
-        assert "torch" in ML_IMPORT_KEYWORDS
-        assert "tensorflow" in ML_IMPORT_KEYWORDS
-        assert "keras" in ML_IMPORT_KEYWORDS
+        """Essential ML frameworks should be in config-loaded indicators."""
+        kws = get_ml_import_keywords()
+        assert "sklearn" in kws
+        assert "torch" in kws
+        assert "tensorflow" in kws
+        assert "keras" in kws
 
     def test_data_libraries_present(self) -> None:
-        """Data processing libraries should be in indicators."""
-        assert "pandas" in ML_IMPORT_KEYWORDS
-        assert "numpy" in ML_IMPORT_KEYWORDS
+        kws = get_ml_import_keywords()
+        assert "pandas" in kws
+        assert "numpy" in kws
 
     def test_ml_operations_present(self) -> None:
-        """Common ML operations should be in indicators."""
-        assert "fit" in ML_IMPORT_KEYWORDS
-        assert "predict" in ML_IMPORT_KEYWORDS
-        assert "model" in ML_IMPORT_KEYWORDS
+        kws = get_ml_import_keywords()
+        assert "fit" in kws
+        assert "predict" in kws
+        assert "model" in kws

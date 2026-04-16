@@ -32,7 +32,7 @@ cd scicode-lint
 pip install -e ".[dev]"
 
 # Install with ALL optional dependencies (recommended for full development)
-pip install -e ".[dev,eval,dashboard,vllm-server]"
+pip install -e ".[dev,eval,dashboard]"
 
 # Verify installation
 scicode-lint --help
@@ -60,13 +60,13 @@ Run security and dependency health checks:
 
 ```bash
 # Full check (vulnerabilities, code security, outdated packages, deprecation warnings)
-python tools/check_dependencies.py
+python scripts/check_dependencies.py
 
 # Quick check (skip slow fresh-venv deprecation check)
-python tools/check_dependencies.py --skip-warnings
+python scripts/check_dependencies.py --skip-warnings
 
 # Check specific dependency groups
-python tools/check_dependencies.py --groups dev,dashboard
+python scripts/check_dependencies.py --groups dev,dashboard
 ```
 
 This runs:
@@ -77,14 +77,13 @@ This runs:
 
 ### Install LLM backend
 
-**vLLM Server**
+**vLLM Server** (runs in a container)
 ```bash
-# Install vLLM
-pip install scicode-lint[vllm-server]
+# One-time: install container runtime
+sudo apt install podman nvidia-container-toolkit
 
-# Start vLLM server
-vllm serve RedHatAI/Qwen3-8B-FP8-dynamic \
-    --trust-remote-code --max-model-len 20000
+# Start the vLLM container
+scicode-lint vllm-server start
 ```
 
 See [INSTALLATION.md](INSTALLATION.md) for detailed setup.
@@ -272,7 +271,7 @@ python evals/run_eval.py --monitor-interval 2
 python evals/run_eval.py --monitor-interval 0
 ```
 
-**See:** [docs_use_human/performance/VLLM_MONITORING.md](docs_use_human/performance/VLLM_MONITORING.md) for key metrics and tuning guidance.
+**See:** [docs/performance/VLLM_MONITORING.md](docs/performance/VLLM_MONITORING.md) for key metrics and tuning guidance.
 
 ## Code Quality
 

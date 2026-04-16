@@ -12,6 +12,7 @@ from typing import Any, Literal
 
 from loguru import logger
 
+from scicode_lint.exceptions import LLMConnectionError
 from scicode_lint.llm.client import LLMClient
 from scicode_lint.llm.tokens import estimate_tokens
 from scicode_lint.repo_filter.classify import FileClassification, classify_file
@@ -92,46 +93,21 @@ class RepoScanSummary:
         }
 
 
-# Default ML-related imports and keywords (fallback if config not available)
-ML_IMPORT_KEYWORDS = [
-    # ML frameworks
-    "sklearn",
-    "torch",
-    "tensorflow",
-    "keras",
-    "xgboost",
-    "lightgbm",
-    "catboost",
-    # Data processing
-    "pandas",
-    "numpy",
-    # Common ML operations
-    "train_test_split",
-    "cross_val",
-    "fit",
-    "predict",
-    "model",
-    "classifier",
-    "regressor",
-    "neural",
-    "dataset",
-    "dataloader",
-]
-
-
 def get_ml_import_keywords() -> list[str]:
-    """Get ML import keywords from config or use defaults.
+    """Get ML import keywords from config.
 
-    Returns:
-        List of keywords for ML import filter.
+    config.toml's ``[preprocessing].ml_import_keywords`` is the single source of
+    truth. Fails loudly if the config cannot be loaded — no hardcoded fallback.
     """
-    try:
-        from scicode_lint.config import get_ml_import_keywords as config_get_keywords
+    from scicode_lint.config import get_ml_import_keywords as config_get_keywords
 
-        keywords = config_get_keywords()
-        return keywords if keywords else ML_IMPORT_KEYWORDS
-    except ImportError:
-        return ML_IMPORT_KEYWORDS
+    keywords = config_get_keywords()
+    if not keywords:
+        raise RuntimeError(
+            "No ML import keywords configured. "
+            "Set [preprocessing].ml_import_keywords in config.toml."
+        )
+    return keywords
 
 
 def has_ml_imports(code: str, keywords: list[str] | None = None) -> bool:
@@ -275,6 +251,11 @@ async def scan_repo_for_ml_files(
                 details=result,
             )
 
+        except LLMConnectionError:
+            # Systemic error — not a per-file classification failure.
+            # Let it propagate so the CLI can exit 2 instead of silently
+            # marking every file "uncertain" and returning exit 0.
+            raise
         except Exception as e:
             logger.warning(f"Error classifying {filepath}: {e}")
             return ScanResult(

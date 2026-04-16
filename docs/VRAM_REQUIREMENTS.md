@@ -10,7 +10,7 @@ scicode-lint requires **minimum 16GB VRAM** with **native FP8 support** (compute
 - 16GB+ VRAM
 - Native FP8 support (compute capability >= 8.9)
 
-**Configuration:** 20K total context (16K input + 4K response), default model: RedHatAI/Qwen3-8B-FP8-dynamic
+**Configuration:** 40K max context (typical: ~20K per request), FP8 KV cache, default model: RedHatAI/Qwen3-8B-FP8-dynamic
 
 ## Setup
 
@@ -33,17 +33,18 @@ If requirements aren't met, the script exits with clear error messages and hardw
 
 **Specs (from config.toml):**
 - Model size: ~9GB
-- Context: 20,000 tokens (16K input + 4K response)
+- Max sequence length: 40,960 tokens (model native max — ceiling, not pre-allocated)
+- Typical input: ~16K tokens (code + prompt); response: ~4K tokens
 - Max input: ~1,400 lines (after ~2,000 token prompt overhead)
 - VRAM usage: ~13GB total (fits comfortably on 16GB GPU)
 
 **Memory breakdown:**
 - Model weights (FP8): ~9GB
-- KV cache (20K context, FP8): ~1.5GB
+- KV cache (FP8, allocated on demand by PagedAttention): ~1.5GB typical
 - Framework overhead: ~2GB
-- Total: ~13GB
+- Total: ~13GB typical
 
-**Customization:** All context/VRAM settings are configurable in `config.toml`. Qwen3-8B supports up to 32K native context.
+**Customization:** All context/VRAM settings are configurable in `config.toml`. Qwen3-8B supports up to 40,960 tokens natively (`max_position_embeddings`).
 
 ## Supported GPUs
 
@@ -56,32 +57,30 @@ If requirements aren't met, the script exits with clear error messages and hardw
 
 With FP8 quantization for both weights and KV cache:
 - Model weights (FP8): ~9GB
-- KV cache (20K context, FP8): ~1.5GB
+- KV cache (FP8, on demand): ~1.5GB for typical ~20K-token sequences
 - Framework overhead: ~2GB
-- **Total: ~12.5GB** (fits in 16GB at 90% utilization)
+- **Total: ~12.5GB typical** (fits in 16GB with headroom)
 
 ## Context Window Sizing
 
-All configurations use **20K total context** (16K input + 4K response):
+The vLLM server accepts sequences up to **40,960 tokens** (Qwen3-8B native max). This is a ceiling, not a pre-allocation — vLLM's PagedAttention allocates KV cache blocks on demand. Raising the ceiling costs nothing for shorter sequences; the real concurrency constraint is actual tokens in flight.
 
-- Based on analysis of 10M+ GitHub repositories
-- Covers **90-95%** of Python files in the wild
+**Typical token allocation per request:**
+- Input: ~16,000 tokens max
+  - System prompt: ~1,450 tokens
+  - Detection question template: ~350–1,050 tokens (mean ~575)
+  - Code content: ~14,000 tokens (~1,400 lines)
+- Response: 4,096 tokens (thinking + JSON)
+
+Based on analysis of 10M+ GitHub repositories:
 - Median file: 258 lines (~2,600 tokens)
 - Mean file: 879 lines (~8,800 tokens)
 - 90th percentile: ~1,500 lines (~15,000 tokens)
 
-**Token allocation:**
-- vLLM context window: 20,000 tokens (total)
-- Reserved for response: 4,096 tokens (thinking mode reasoning)
-- Maximum input: ~16,000 tokens
-  - System prompt: ~1,450 tokens
-  - Detection question template: ~350–1,050 tokens (mean ~575)
-  - Code content: ~14,000 tokens (~1,400 lines)
-
 **Why 4K response tokens?**
 Benchmarked for optimal accuracy (see `benchmarks/reports/max_tokens/`). 4K achieves best accuracy; higher values show diminishing returns.
 
-**vLLM paged attention:** Smaller files don't waste VRAM. Memory is allocated dynamically based on actual file size.
+**PagedAttention:** Smaller files don't waste VRAM. Memory is allocated dynamically based on actual sequence length, not the 40K ceiling.
 
 ## Verification
 

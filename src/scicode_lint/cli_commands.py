@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 
 from loguru import logger
 
-from scicode_lint.config import LinterConfig, LLMConfig
+from scicode_lint.config import LinterConfig, LLMConfig, get_default_config
 from scicode_lint.linter import SciCodeLinter
 from scicode_lint.output.formatter import LintError, LintResult, format_findings
 
@@ -22,6 +22,28 @@ from .cli_parse import _parse_filters
 
 if TYPE_CHECKING:
     from scicode_lint.repo_filter.scan import RepoScanSummary
+
+
+def _check_file_capturing_errors(linter: SciCodeLinter, file_path: Path) -> LintResult:
+    """Lint one file; if it raises, return a LintResult carrying a LintError.
+
+    Used by both ``lint`` and ``analyze`` so per-file error handling is in one
+    place. Systemic errors (e.g. ``LLMConnectionError``) should be re-raised
+    inside the linter itself — this helper only captures per-file failures
+    (context overflow, notebook parse, etc.) that the CLI surfaces via
+    ``LintResult.error`` and uses to drive exit code ``2``.
+    """
+    try:
+        return linter.check_file(file_path)
+    except Exception as e:
+        logger.error(f"Error checking {file_path}: {e}")
+        error = LintError(
+            file=file_path,
+            error_type=type(e).__name__,
+            message=str(e),
+            details=e.to_dict() if hasattr(e, "to_dict") else None,
+        )
+        return LintResult(file=file_path, findings=[], error=error)
 
 
 def _run_lint(args: argparse.Namespace) -> int:
@@ -74,30 +96,12 @@ def _run_lint(args: argparse.Namespace) -> int:
     results = []
     for idx, file_path in enumerate(files_to_check, 1):
         logger.info(f"Processing file {idx}/{len(files_to_check)}")
-        try:
-            result = linter.check_file(file_path)
-            results.append(result)
-        except Exception as e:
-            logger.error(f"Error checking {file_path}: {e}")
-            # If --json-errors is enabled, capture errors in structured format
-            if args.json_errors:
-                error_details = None
-                # Try to extract structured details from exception if available
-                if hasattr(e, "to_dict"):
-                    error_details = e.to_dict()
-
-                error = LintError(
-                    file=file_path,
-                    error_type=type(e).__name__,
-                    message=str(e),
-                    details=error_details,
-                )
-                results.append(LintResult(file=file_path, findings=[], error=error))
-            continue
+        results.append(_check_file_capturing_errors(linter, file_path))
 
     # Calculate timing statistics
     elapsed = time.time() - start_time
     total_findings = sum(len(r.findings) for r in results)
+    errors_occurred = any(r.error is not None for r in results)
 
     # Format and print results
     output = format_findings(results, output_format=args.format)
@@ -124,7 +128,10 @@ def _run_lint(args: argparse.Namespace) -> int:
 
     logger.success(f"Linting completed in {elapsed:.2f}s")
 
-    # Return non-zero if any findings
+    # Exit codes follow linter convention (same as ruff, mypy, shellcheck):
+    #   0 = clean, 1 = findings detected, 2 = tool/runtime error
+    if errors_occurred:
+        return 2
     return 1 if total_findings > 0 else 0
 
 
@@ -480,7 +487,11 @@ def _run_analyze(args: argparse.Namespace) -> int:
         enabled_severities, enabled_patterns, enabled_categories = _parse_filters(args)
 
         # Configure linter
-        lint_concurrency = args.lint_concurrency or 150  # Default from LinterConfig
+        lint_concurrency = (
+            args.lint_concurrency
+            if args.lint_concurrency is not None
+            else get_default_config().max_concurrent
+        )
         linter_config = LinterConfig(
             llm_config=llm_config,
             min_confidence=args.min_confidence,
@@ -495,23 +506,12 @@ def _run_analyze(args: argparse.Namespace) -> int:
         results = []
         for idx, file_path in enumerate(ml_files, 1):
             logger.info(f"Analyzing file {idx}/{len(ml_files)}: {file_path.name}")
-            try:
-                result = linter.check_file(file_path)
-                results.append(result)
-            except Exception as e:
-                logger.error(f"Error checking {file_path}: {e}")
-                if args.json_errors:
-                    error = LintError(
-                        file=file_path,
-                        error_type=type(e).__name__,
-                        message=str(e),
-                        details=e.to_dict() if hasattr(e, "to_dict") else None,
-                    )
-                    results.append(LintResult(file=file_path, findings=[], error=error))
+            results.append(_check_file_capturing_errors(linter, file_path))
 
         # Calculate stats
         elapsed = time.time() - start_time
         total_findings = sum(len(r.findings) for r in results)
+        errors_occurred = any(r.error is not None for r in results)
 
         # Format output
         if args.format == "json":
@@ -560,6 +560,9 @@ def _run_analyze(args: argparse.Namespace) -> int:
             output = "\n".join(lines)
 
         print(output)
+        # Exit codes follow linter convention: 0=clean, 1=findings, 2=error
+        if errors_occurred:
+            return 2
         return 1 if total_findings > 0 else 0
 
     finally:

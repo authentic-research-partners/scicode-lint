@@ -193,7 +193,7 @@ python evals/integration/integration_eval.py --id baseline_v1
 
 **Why separate from integration tests:** Integration tests use controlled scenarios (synthetic or LLM-generated). Real-world validation uses actual research code from published papers - the ultimate test of whether patterns catch bugs scientists actually make.
 
-See [real_world_demo/README.md](../real_world_demo/README.md) for pipeline details.
+See [real_world_demo/README.md](../../real_world_demo/README.md) for pipeline details.
 
 ---
 
@@ -328,5 +328,5 @@ These forces pull in different directions. Understanding the tensions helps when
 | 4. Pattern evals | Automated + LLM | `evals/run_eval.py` | Detection accuracy | vLLM calls |
 | 5. Integration | Automated + LLM | `evals/integration/` | Generalization | vLLM + Claude |
 | 6. Real-world | Automated + LLM | `real_world_demo/` | Precision on actual papers | vLLM + Claude |
-| Pre-commit | Automated | `scripts/pre-commit` | Code style, types | Free |
 | Unit tests | Automated | `tests/` | Framework correctness | Free |
+| Style/type checks | Manual | `ruff check && ruff format && mypy .` | Code style, types | Free |

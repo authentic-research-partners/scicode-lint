@@ -1,11 +1,17 @@
 """Format linter findings for output."""
 
+import io
 import json
+import sys
 from collections import Counter
 from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field
+from rich.console import Console, Group
+from rich.panel import Panel
+from rich.syntax import Syntax
+from rich.text import Text
 
 from scicode_lint.config import Severity
 
@@ -207,81 +213,134 @@ def _format_json(results: list[LintResult]) -> str:
     return json.dumps(data, indent=2)
 
 
-def _format_text(results: list[LintResult]) -> str:
-    """Format as human-readable text.
+_SEVERITY_STYLE: dict[Severity, tuple[str, str]] = {
+    # (label, rich color) — label keeps emoji so piped plain-text still signals severity
+    Severity.CRITICAL: ("🔴 CRITICAL", "bold red"),
+    Severity.HIGH: ("🟠 HIGH", "bold dark_orange"),
+    Severity.MEDIUM: ("🟡 MEDIUM", "bold yellow"),
+}
 
-    Includes visual indicators (emojis) and clear formatting.
+
+def _format_location(loc: "Location") -> str:
+    """Human-readable location string (e.g., 'in train_model (lines 10-14, focus: 12)')."""
+    if loc.name and loc.name != "<module>":
+        if loc.lines:
+            line_range = f"lines {loc.lines[0]}-{loc.lines[-1]}"
+            if loc.focus_line and loc.focus_line != loc.lines[0]:
+                return f"in {loc.name} ({line_range}, focus: {loc.focus_line})"
+            return f"in {loc.name} ({line_range})"
+        return f"in {loc.name}"
+    if loc.focus_line:
+        return f"line {loc.focus_line}"
+    if loc.lines:
+        if len(loc.lines) == 1:
+            return f"line {loc.lines[0]}"
+        return f"lines {loc.lines[0]}-{loc.lines[-1]}"
+    return "unknown location"
+
+
+def _render_finding(finding: "Finding") -> Panel:
+    """Render a single finding as a Rich Panel."""
+    severity: Severity = (
+        finding.severity if isinstance(finding.severity, Severity) else Severity(finding.severity)
+    )
+    label, color = _SEVERITY_STYLE[severity]
+    qualifier = "?" if finding.detection_type == "context-dependent" else ""
+
+    title = Text()
+    title.append(f"{label}{qualifier}", style=color)
+    title.append(" · ", style="dim")
+    title.append(finding.id, style="bold")
+    title.append(" · ", style="dim")
+    title.append(_format_location(finding.location))
+
+    body_parts: list[Any] = [Text(finding.issue, style="bold")]
+    body_parts.append(Text(finding.explanation))
+    if finding.reasoning:
+        reasoning = Text()
+        reasoning.append("Reasoning: ", style="dim")
+        reasoning.append(finding.reasoning)
+        body_parts.append(reasoning)
+
+    snippet = finding.location.snippet
+    if snippet:
+        # Display the snippet with original file line numbers in the gutter.
+        # `start_line` renumbers the displayed gutter to match the source file;
+        # `highlight_lines` uses the same renumbered scheme. No `line_range` —
+        # the snippet is already the exact extracted slice.
+        start_line = finding.location.lines[0] if finding.location.lines else 1
+        highlight = (
+            {finding.location.focus_line} if finding.location.focus_line is not None else None
+        )
+        body_parts.append(
+            Syntax(
+                snippet,
+                "python",
+                line_numbers=True,
+                start_line=start_line,
+                highlight_lines=highlight,
+                background_color="default",
+                word_wrap=True,
+            )
+        )
+
+    return Panel(Group(*body_parts), title=title, title_align="left", border_style=color)
+
+
+def _format_text(results: list[LintResult]) -> str:
+    """Format as human-readable text using Rich panels.
+
+    Color is enabled only when stdout is a TTY. When piped/redirected, Rich
+    strips ANSI but keeps Unicode box drawing and syntax-highlighted code
+    structure (without colors). Agents should use ``--format json`` for
+    structured output regardless.
 
     Args:
         results: List of lint results
 
     Returns:
-        Human-readable text output
+        Human-readable text output (with ANSI codes iff stdout is a TTY)
     """
-    lines = []
+    use_color = sys.stdout.isatty()
+    # Route Console output to an in-memory buffer; export_text() below returns
+    # the rendered string. `record=True` alone still writes to stdout, which
+    # would double-print when the caller invokes `print(format_findings(...))`.
+    console = Console(
+        file=io.StringIO(),
+        record=True,
+        force_terminal=use_color,
+        no_color=not use_color,
+        width=100,
+        highlight=False,
+        emoji=True,
+    )
 
     for result in results:
-        # Show errors first if present
         if result.error:
-            lines.append(f"⚠️  {result.file} — Error during linting")
-            lines.append(f"   {result.error.error_type}: {result.error.message}")
-            lines.append("")
+            err = Text()
+            err.append("⚠️  ", style="bold yellow")
+            err.append(f"{result.file}", style="bold")
+            err.append(" — Error during linting\n", style="bold")
+            err.append(f"    {result.error.error_type}: {result.error.message}")
+            console.print(err)
+            console.print()
             continue
 
         if not result.findings:
             continue
 
-        lines.append(f"{result.file} — {len(result.findings)} issues found\n")
+        header = Text()
+        header.append(f"{result.file}", style="bold")
+        count = len(result.findings)
+        header.append(f" — {count} issue{'s' if count != 1 else ''} found")
+        console.print(header)
+        console.print()
 
         for finding in result.findings:
-            # Severity icon (add '?' for context-dependent findings)
-            severity_icon = {
-                Severity.CRITICAL: "🔴 CRITICAL",
-                Severity.HIGH: "🟠 HIGH",
-                Severity.MEDIUM: "🟡 MEDIUM",
-            }[finding.severity]
+            console.print(_render_finding(finding))
+            console.print()
 
-            # Add indicator for context-dependent findings
-            if finding.detection_type == "context-dependent":
-                icon = f"{severity_icon}?"
-            else:
-                icon = severity_icon
-
-            # Location description - show name, lines, and focus
-            loc = finding.location
-            if loc.name and loc.name != "<module>":
-                # Show function/method name with line range and focus
-                if loc.lines:
-                    line_range = f"lines {loc.lines[0]}-{loc.lines[-1]}"
-                    if loc.focus_line and loc.focus_line != loc.lines[0]:
-                        location = f"in {loc.name} ({line_range}, focus: {loc.focus_line})"
-                    else:
-                        location = f"in {loc.name} ({line_range})"
-                else:
-                    location = f"in {loc.name}"
-            elif loc.focus_line:
-                # No name but have focus line
-                location = f"line {loc.focus_line}"
-            elif loc.lines:
-                # No name, just show lines
-                if len(loc.lines) == 1:
-                    location = f"line {loc.lines[0]}"
-                else:
-                    location = f"lines {loc.lines[0]}-{loc.lines[-1]}"
-            else:
-                location = "unknown location"
-
-            lines.append(f"{icon} [{location}] {finding.issue}")
-            lines.append(f"   {finding.explanation}")
-            if finding.reasoning:
-                lines.append(f"   Reasoning: {finding.reasoning}")
-            if finding.location.snippet:
-                lines.append("   Code:")
-                for snippet_line in finding.location.snippet.split("\n"):
-                    lines.append(f"      {snippet_line}")
-            lines.append("")
-
-    return "\n".join(lines)
+    return console.export_text(styles=use_color)
 
 
 def get_json_schemas() -> dict[str, Any]:

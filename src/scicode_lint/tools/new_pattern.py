@@ -147,7 +147,7 @@ impact_severity = ""  # critical, high, medium
 educational_notes = """
 TODO: Notes for teaching/learning about this pattern.
 """
-'''
+'''  # nosec B608
 
         # Write pattern.toml
         toml_file = pattern_dir / "pattern.toml"

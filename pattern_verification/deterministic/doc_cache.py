@@ -14,7 +14,7 @@ import tomllib
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 # Add project root to sys.path so pattern_verification can be imported
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -38,7 +38,11 @@ MAX_DOC_LINES = 1000  # Warn if cached doc exceeds this (find more specific page
 class DocCutResponse(BaseModel):
     """Response indicating which line ranges to cut."""
 
-    cut: list[list[int]]  # List of [start, end] pairs
+    cut: list[list[int]] = Field(
+        default_factory=list,
+        max_length=50,
+        description="List of [start, end] line-range pairs to cut (at most 50 ranges)",
+    )
 
 
 def get_cache_filename(url: str, pattern_id: str = "") -> str:
@@ -79,7 +83,7 @@ def extract_doc_content_with_vllm(markdown_content: str) -> tuple[str, bool]:
     """Use local vLLM to extract documentation content with async chunked processing.
 
     Asks vLLM for line ranges to CUT (navigation/boilerplate), not content to keep.
-    Uses existing VLLMClient infrastructure with guided_json for structured output.
+    Uses existing VLLMClient infrastructure with response_format json_schema for structured output.
 
     Returns:
         Tuple of (filtered_content, success). If vLLM fails, returns (original_content, False).
@@ -128,6 +132,8 @@ Return {{"cut": [[start,end], ...]}} for line ranges to remove. Empty if nothing
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
                 schema=DocCutResponse,
+                thinking_budget=200,
+                thinking_effort=0.3,
             )
             cut_lines: set[int] = set()
             for range_pair in result.cut:

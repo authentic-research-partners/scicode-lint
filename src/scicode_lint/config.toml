@@ -16,7 +16,7 @@ model = "RedHatAI/Qwen3-8B-FP8-dynamic"
 
 # Served model name for API calls (the --served-model-name alias)
 # This is what vLLM exposes via /v1/models endpoint
-# Must match the name from start_vllm.sh (derived from model path)
+# Must match --served-model-name passed to the vLLM container
 model_served_name = "qwen3-8b-fp8"
 
 # API base URL (auto-detected if not specified)
@@ -24,7 +24,9 @@ model_served_name = "qwen3-8b-fp8"
 base_url = ""
 
 # Request timeout in seconds
-timeout = 180
+# At concurrency=100, tail-latency detection calls reach ~540s as requests
+# compete for vLLM batch slots. 600s gives headroom without masking real hangs.
+timeout = 600
 
 # Sampling parameters for Qwen3 thinking mode
 # (recommended by https://huggingface.co/Qwen/Qwen3-8B-FP8)
@@ -35,22 +37,64 @@ top_k = 20
 
 # Maximum input tokens (code + prompts)
 # Covers ~1,500 line files (90-95th percentile of Python files)
-# Qwen3-8B supports up to 32K native context
 max_input_tokens = 16000
 
 # Maximum output tokens (thinking + response)
 # See benchmarks/reports/max_tokens/BENCHMARK_SUMMARY.md for accuracy/speed tradeoffs
 max_completion_tokens = 4096
 
-# Note: vLLM max_model_len is calculated as max_input_tokens + max_completion_tokens (20K total)
-# With FP8 KV cache, 20K context uses ~1.5GB VRAM, fits comfortably on 16GB GPUs
+# Thinking controls for reasoning models (Qwen3)
+# Two complementary controls — use together for consistent behavior:
+#   effort (soft, 0.0-1.0): guides the model to think less or more
+#   budget (hard, token count): abruptly stops thinking when reached
+#
+# Pair them consistently: low effort + low budget, high effort + high budget
+#   Detection (complex code analysis): no effort override + budget=3584
+#   Classification (simple binary):    effort=0.3 + budget=200 (per-call)
+#
+# Only effective when --reasoning-parser is set; ignored for non-thinking models
+
+# Hard cap on thinking tokens. Prevents runaway reasoning from
+# exhausting max_completion_tokens and leaving no space for JSON.
+# 3584 = max_completion_tokens(4096) - 512 reserved for JSON response
+thinking_budget = 3584
+
+# Soft guide for thinking depth (0.0=minimal, 1.0=deep)
+# Default: not set — model uses its own default for detection (complex tasks)
+# Simple callers override per-call with thinking_effort=0.3
+# thinking_effort = 0.8
 
 [vllm]
+# Maximum sequence length (prompt + completion) the vLLM server will accept.
+# This is a ceiling, not a pre-allocation — PagedAttention allocates KV cache
+# on demand, so raising this costs nothing for sequences that stay short.
+# Set to the model's native max (Qwen3-8B max_position_embeddings = 40960).
+# The real concurrency constraint is actual tokens in flight, not this ceiling.
+max_model_len = 40960
 # Minimum VRAM requirement in MB (16GB = 16384 MB, with some tolerance = 15500)
 min_vram_mb = 15500
 
 # GPU memory utilization (0.0-1.0)
-gpu_memory_utilization = 0.85
+# 0.9 = 90% of VRAM for model weights + KV cache. On 16 GB GPU:
+# 0.9 × 16 = 14.4 GB → ~9 GB model + ~5.4 GB KV cache (FP8).
+# Higher values increase KV capacity (more concurrent sequences)
+# but leave less room for other GPU workloads.
+gpu_memory_utilization = 0.9
+
+# Reasoning parser for thinking models (passed as --reasoning-parser to vLLM)
+# Qwen3-specific: separates <think> blocks from JSON output server-side
+# Other models need their own parser (e.g., "deepseek" for DeepSeek-R1)
+# Set to "" to disable (for non-thinking models)
+reasoning_parser = "qwen3"
+
+# Container image version (docker.io/vllm/vllm-openai:<version>)
+# Pinned to v0.18.0. Newer versions removed --enable-reasoning in favor of
+# implicit enabling when --reasoning-parser is set; our launcher already does this.
+vllm_version = "v0.18.0"
+
+# Container RAM limit (GPU VRAM is separate, managed by --gpu-memory-utilization)
+# vLLM itself uses ~2-3GB host RAM; 4g gives headroom
+vllm_memory = "4g"
 
 # Note: All patterns are checked concurrently (no limit)
 # vLLM handles batching and queuing internally
@@ -76,13 +120,18 @@ enabled_severities = ["critical", "high", "medium"]
 max_concurrent_files = 1
 
 # Max concurrent pattern checks per file (--lint-concurrency)
-# Controls how many LLM requests client sends in parallel
-# Reduced from 200 to 150 based on speed benchmark showing 100% KV cache
-# utilization and 527 preemptions - see benchmarks/reports/speed/
-lint_concurrency = 150
+# Controls how many LLM requests client sends in parallel.
+# 150 drove KV cache to 99.8% with 385+ preemptions; 60 ran cleanly (peak KV
+# ~80%, zero truncations) but left GPU under-utilized. 100 is the middle
+# ground — more in-flight work for the GPU while staying off the KV ceiling.
+lint_concurrency = 100
+
+# Max concurrent test evaluations for `evals/run_eval.py` (--max-concurrent)
+# Same reasoning as lint_concurrency — keeps KV cache out of the red zone.
+max_concurrent_evals = 100
 
 # vLLM --max-num-seqs: Max sequences vLLM server can batch
-# This is vLLM's internal limit, passed to start_vllm.sh
+# This is vLLM's internal limit, passed to the vLLM container
 # Default 256 is vLLM's default; reduce if OOM during high concurrency
 vllm_max_num_seqs = 256
 

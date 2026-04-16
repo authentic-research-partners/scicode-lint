@@ -282,11 +282,11 @@ DEFAULT_ABSTRACT_FILTER_TIMEOUT = 15
 # Papers with code: high concurrency - large batches benefit from parallelism
 # Leakage paper: lower concurrency - notebooks are larger, avoid overload
 ANALYSIS_CONCURRENCY: dict[str, int] = {
-    "papers_with_code": 150,  # High concurrency for batch processing
-    "real_world_demo": 150,  # Same as papers_with_code (default source)
+    "papers_with_code": 60,  # Capped to stay out of KV-cache preemption zone
+    "real_world_demo": 60,  # Same as papers_with_code (default source)
     "leakage_paper": 50,  # Lower concurrency for larger notebooks
 }
-DEFAULT_ANALYSIS_CONCURRENT = 150  # Default if source not in dict
+DEFAULT_ANALYSIS_CONCURRENT = 60  # Default if source not in dict
 
 
 # Data source configurations for run_analysis.py --source shortcut

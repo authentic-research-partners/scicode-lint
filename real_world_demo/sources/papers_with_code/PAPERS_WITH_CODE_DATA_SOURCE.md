@@ -114,7 +114,7 @@ PYTHONPATH=. python -m real_world_demo.sources.papers_with_code.generate_manifes
     --input-file real_world_demo/data/qualifying_files.json \
     --papers-file real_world_demo/data/sampled_papers.json
 
-# Step 6: Run analysis (uses source-specific default: 150 concurrent)
+# Step 6: Run analysis (uses source-specific default: 60 concurrent)
 PYTHONPATH=. python real_world_demo/run_analysis.py \
     --manifest real_world_demo/collected_code/manifest.csv \
     --base-dir real_world_demo/collected_code

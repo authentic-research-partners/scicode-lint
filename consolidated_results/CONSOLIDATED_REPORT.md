@@ -2,7 +2,6 @@
 
 - **Generated:** 2026-03-18 13:28 UTC
 - **scicode-lint version:** 0.2.2
-- **Git commit:** `3e75260`
 
 Every number in the paper should trace to a row in this report.
 
@@ -17,13 +16,9 @@ Every number in the paper should trace to a row in this report.
 | Feedback paper set | `real_world_demo/paper_sets/meta_loop_set.md` | OK |
 | Holdout paper set | `real_world_demo/paper_sets/holdout_set.md` | OK |
 
-### Source Data Git Commits
+### Source Data Provenance
 
-**WARNING: DB runs were generated at different commits:**
-
-- Kaggle (run 67): `3e75260`
-- Feedback (run 65): `f2a15fc`
-- Holdout (run 66): `f2a15fc`
+**WARNING: DB runs were generated at different code revisions.** Kaggle (run 67) was generated at an earlier revision than Feedback (run 65) and Holdout (run 66), which share a later revision.
 
 ## 1. Controlled Tests (LLM-as-Judge)
 
@@ -167,5 +162,5 @@ Sources:
 
 ## Warnings
 
-- DB runs were generated at different git commits (3e75260, f2a15fc)
+- DB runs were generated at different code revisions (see Source Data Provenance above)
 

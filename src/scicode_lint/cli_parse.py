@@ -126,11 +126,6 @@ def parse_args(args: list[str] | None = None) -> argparse.Namespace:
         help="Output format (text for humans, json for GenAI agents)",
     )
     lint_parser.add_argument(
-        "--json-errors",
-        action="store_true",
-        help="Include errors in JSON output (useful for GenAI agents)",
-    )
-    lint_parser.add_argument(
         "--min-confidence",
         type=float,
         default=0.7,
@@ -228,11 +223,6 @@ def parse_args(args: list[str] | None = None) -> argparse.Namespace:
         help="Output format",
     )
     analyze_parser.add_argument(
-        "--json-errors",
-        action="store_true",
-        help="Include errors in JSON output",
-    )
-    analyze_parser.add_argument(
         "--min-confidence",
         type=float,
         default=0.7,
@@ -274,24 +264,19 @@ def parse_args(args: list[str] | None = None) -> argparse.Namespace:
         "--lint-concurrency",
         type=int,
         default=None,
-        help="Max concurrent pattern checks per file during linting (default: 150)",
+        help="Max concurrent pattern checks per file during linting (default: 60)",
     )
     add_common_args(analyze_parser)
 
     # vllm-server command
     server_parser = subparsers.add_parser(
         "vllm-server",
-        help="Manage vLLM server (start/stop/status)",
+        help="Manage vLLM container (start/stop/status/restart/logs/rm)",
     )
     server_subparsers = server_parser.add_subparsers(dest="server_command", help="Server action")
 
     # server start
-    server_start = server_subparsers.add_parser("start", help="Start vLLM server")
-    server_start.add_argument(
-        "--restart",
-        action="store_true",
-        help="Kill any running vLLM server before starting",
-    )
+    server_start = server_subparsers.add_parser("start", help="Start vLLM container")
     server_start.add_argument(
         "--model",
         type=str,
@@ -304,12 +289,48 @@ def parse_args(args: list[str] | None = None) -> argparse.Namespace:
         default=None,
         help="Port to run on (default: 5001)",
     )
+    server_start.add_argument(
+        "--pull",
+        action="store_true",
+        help="Pull latest container image before starting",
+    )
 
     # server stop
-    server_subparsers.add_parser("stop", help="Stop running vLLM server")
+    server_subparsers.add_parser("stop", help="Stop vLLM container")
 
     # server status
-    server_subparsers.add_parser("status", help="Show server and GPU status")
+    server_subparsers.add_parser("status", help="Show container and GPU status")
+
+    # server restart
+    server_restart = server_subparsers.add_parser(
+        "restart", help="Restart vLLM container (stop + remove + start)"
+    )
+    server_restart.add_argument("--model", type=str, default=None)
+    server_restart.add_argument("--port", type=int, default=None)
+    server_restart.add_argument("--pull", action="store_true", help="Pull latest image")
+
+    # server logs
+    server_logs = server_subparsers.add_parser("logs", help="Show vLLM container logs")
+    server_logs.add_argument("-f", "--follow", action="store_true", help="Follow log output")
+    server_logs.add_argument(
+        "--tail", type=int, default=50, help="Number of lines to show (default: 50)"
+    )
+
+    # server rm
+    server_rm = server_subparsers.add_parser("rm", help="Remove vLLM container")
+    server_rm.add_argument("--force", action="store_true", help="Force remove even if running")
+
+    # server monitor
+    server_monitor = server_subparsers.add_parser(
+        "monitor", help="Live-refresh monitor for vLLM metrics"
+    )
+    server_monitor.add_argument(
+        "-i",
+        "--interval",
+        type=float,
+        default=2.0,
+        help="Refresh interval in seconds (default: 2)",
+    )
 
     parsed = parser.parse_args(args)
 

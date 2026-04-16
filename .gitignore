@@ -1,59 +1,39 @@
 # Python
 __pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
+*.pyc
+*.pyo
 *.egg-info/
-.installed.cfg
-*.egg
+dist/
+build/
 
 # Virtual environments
 .venv/
 venv/
-ENV/
-env/
 
 # IDE
 .vscode/
 .idea/
 *.swp
 *.swo
-*~
 
 # Testing
 .pytest_cache/
 .coverage
 htmlcov/
-.tox/
 
 # Type checking
 .mypy_cache/
-.dmypy.json
-dmypy.json
 
 # OS
 .DS_Store
 Thumbs.db
 
+# Linting
+.ruff_cache/
+
 # Apptainer
 *.sif
 *.simg
-
-
-.ruff_cache/
 
 # Log files
 *.log
@@ -62,38 +42,22 @@ Thumbs.db
 pattern_verification/semantic/reports/
 pattern_verification/deterministic/reports/
 
-# Benchmarking results and temporary files
-benchmark_results.json
-benchmark_results.txt
-benchmark_test.py
-benchmark_test_file.py
-
-# Benchmark reports (regenerated on each run, only summaries tracked)
+# Benchmark reports (regenerated on each run)
 benchmarks/reports/**/*.json
 
-# Evaluation reports (volatile, regenerated on each run)
+# Evaluation reports (regenerated on each run)
 evals/reports/
 evals/eval_run.log
-evals/reports/*
 evals/integration/integration_report.md
 
-# Session notes and dated evaluation status documents
-evals/*_2026-*.md
-evals/SESSION_SUMMARY.md
-evals/ML_PATTERNS_TEST_STATUS.md
-
-# Project statistics (generated on-demand, not tracked)
+# Project statistics (generated on-demand)
 PROJECT_STATS.md
 PROJECT_STATS.json
-stats/
 
-# Temporary review output files
-*_review.txt
-
-# Reference doc cache (auto-generated, expires after 7 days)
+# Reference doc cache (auto-generated)
 pattern_verification/deterministic/doc_cache/
 
-# Real-world demo: collected code, cloned repos, and reports (large/generated, not tracked)
+# Real-world demo: collected code, cloned repos, and reports (large/generated)
 real_world_demo/data/
 real_world_demo/cloned_repos/
 real_world_demo/collected_code/
@@ -103,9 +67,5 @@ real_world_demo/reports/
 *.db
 *.sqlite
 
-# Generated files that may accidentally land in package directory
-src/scicode_lint/evals/
-src/scicode_lint/reports/
-
-# Future work notes (local only)
-future_work/
+# direnv
+.envrc

@@ -9,6 +9,8 @@ from typing import Any
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from scicode_lint.exceptions import ConfigError
+
 
 def _load_bundled_config() -> dict[str, Any]:
     """Load defaults from bundled config.toml (single source of truth).
@@ -109,6 +111,16 @@ class LLMConfig(BaseSettings):
         le=32768,
         description="Maximum output tokens (thinking + response)",
     )
+    thinking_budget: int = Field(
+        default_factory=lambda: _LLM_DEFAULTS.get("thinking_budget", 3584),
+        ge=0,
+        le=32768,
+        description="Thinking token budget — hard cap (0 = no cap)",
+    )
+    thinking_effort: float | None = Field(
+        default_factory=lambda: _LLM_DEFAULTS.get("thinking_effort"),
+        description="Thinking effort — soft guide (0.0-1.0, None = omit)",
+    )
 
     @property
     def max_model_len(self) -> int:
@@ -144,7 +156,7 @@ class LinterConfig:
         enabled_severities: set[Severity] | None = None,
         enabled_patterns: set[str] | None = None,
         enabled_categories: set[str] | None = None,
-        max_concurrent: int = 150,
+        max_concurrent: int = 60,
     ):
         self.patterns_dir = patterns_dir or get_default_patterns_dir()
         self.llm_config = llm_config or load_llm_config()
@@ -180,8 +192,11 @@ def get_default_patterns_dir() -> Path:
     if user_patterns.exists():
         return user_patterns
 
-    # Fallback to package location even if it doesn't exist yet
-    return pkg_patterns
+    raise RuntimeError(
+        f"No patterns directory found. Expected packaged patterns at {pkg_patterns} "
+        f"or user patterns at {user_patterns}. Reinstall scicode-lint if the bundled "
+        "patterns directory is missing."
+    )
 
 
 @functools.lru_cache(maxsize=1)
@@ -258,11 +273,15 @@ def load_llm_config() -> LLMConfig:
 def get_default_config() -> LinterConfig:
     """Get default linter configuration with TOML/env overrides."""
     toml_config = load_config_from_toml()
-    performance = toml_config.get("performance", {})
+    if "performance" not in toml_config or "lint_concurrency" not in toml_config["performance"]:
+        raise ConfigError(
+            "config.toml is missing [performance].lint_concurrency — "
+            "required for linter concurrency"
+        )
     return LinterConfig(
         patterns_dir=get_default_patterns_dir(),
         llm_config=load_llm_config(),
-        max_concurrent=performance.get("lint_concurrency", 150),
+        max_concurrent=toml_config["performance"]["lint_concurrency"],
     )
 
 

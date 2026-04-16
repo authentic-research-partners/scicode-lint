@@ -5,6 +5,112 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-04-16
+
+### Breaking
+- **CLI exit code semantics changed.** Now `0` = clean, `1` = findings
+  detected, `2` = tool/runtime error (vLLM unreachable, file parse failure,
+  etc.). Previously `1` was returned for both findings and tool errors. CI
+  scripts that treat any non-zero exit as a tool error must branch on `2`
+  instead. See [USAGE.md § `lint`](docs/USAGE.md#lint).
+- **`--json-errors` flag removed** from both `lint` and `analyze` commands.
+  Per-file errors are always included in both text and JSON output now, and
+  any script still passing `--json-errors` will fail argparse with
+  "unrecognized arguments". The structured `error` object in JSON results is
+  unchanged.
+- **Text-output format restructured.** Findings now render as Rich panels with
+  syntax-highlighted code snippets, line numbers, and focus-line gutter
+  instead of flat indented text. Scripts grepping raw text output (e.g.
+  `grep "🔴 CRITICAL \["`) must be rewritten — use `--format json` for
+  stable, machine-readable output. Color is emitted only when stdout is a
+  TTY; piped output stays ANSI-free and fixed-width.
+- **`LintError.error_type` strings changed** for vLLM connection failures:
+  `"RuntimeError"` → `"LLMConnectionError"`. Consumers parsing this JSON
+  field must update their matchers.
+- **`MissingLocationError` no longer inherits from `ValueError`.** Callers
+  catching it via `except ValueError` must switch to the exception name or
+  `SciCodeLintError`. Verified in-tree: only raised and handled inside
+  `_handle_response`; no external `except ValueError` caught it.
+
+### Added
+- **Typed exception hierarchy** — new `scicode_lint.exceptions` module with
+  `SciCodeLintError` base class. `ContextLengthError`, `MissingLocationError`,
+  and `NotebookParseError` now inherit from it, and a new `LLMConnectionError`
+  replaces the generic `RuntimeError` raised by `detect_vllm()`. Callers can
+  catch a single base class to handle every documented failure mode. See
+  [USAGE.md § Error Handling](docs/USAGE.md#error-handling).
+- **CLI exit code `2`** for tool/runtime errors (see Breaking above).
+- **Rich-polished text output** — findings render as syntax-highlighted panels
+  with line numbers and focus-line gutter (see Breaking above for migration).
+- **"For GenAI Agents" README section** — documents the `--format json`
+  path, exit-code conventions, and exception hierarchy for programmatic
+  consumers.
+- **Fast-fail on unreachable vLLM URL.** `VLLMClient` lazily probes
+  `{base_url}/v1/models` on the first request (3s timeout). A bad or
+  dead `--vllm-url` now raises `LLMConnectionError` in seconds instead
+  of burning the full openai retry budget (previously up to ~9 min on
+  a refused connection).
+- **Consistent `LLMConnectionError` propagation to exit code `2`** across
+  every stage of the pipeline:
+  - **Per-file lint** (`linter.py`): systemic connection failures re-raise
+    through the pattern loop instead of being demoted to `patterns_failed`
+    entries that left `LintResult.error = None`.
+  - **Filter / classify** (`repo_filter/scan.py`): `scicode-lint analyze`
+    used to swallow connection failures and report "no self-contained ML
+    files found" with exit `0`; now fails fast with exit `2`.
+  - **Mid-call drops** (`llm/client.py`): `openai.APIConnectionError` and
+    `openai.APITimeoutError` raised during a live request now map to
+    `LLMConnectionError` (previously wrapped as generic `RuntimeError`).
+- **Container-based vLLM** — `scicode-lint vllm-server start` now launches vLLM
+  in a podman/docker container. New commands: `restart`, `logs`, `rm`, `monitor`.
+  Requires `podman` or `docker` + `nvidia-container-toolkit`.
+- **FP8 KV cache** — `--kv-cache-dtype fp8` roughly doubles concurrent-request
+  budget at a given VRAM level. Requires FP8 hardware (compute capability ≥ 8.9).
+- **Thinking budget controls** — `thinking_budget` (hard cap) and
+  `thinking_effort` (soft guide) in `config.toml` tune model reasoning per call.
+  Default: uncapped.
+- **Transient retry** on `async_complete_structured()` (empty content or JSON
+  glitches) and `ClaudeCLI.arun_json()` (parse errors).
+  See [CONSTRAINED_DECODING.md](./src/scicode_lint/llm/CONSTRAINED_DECODING.md#transient-retry).
+- **Rich-based `vllm-server monitor`** — live panel with VRAM/GPU bars, request
+  counts, KV cache + prefix-cache hit rate, latency, throughput.
+- **Paper citation** — `CITATION.cff`, README section, and PyPI sidebar point to
+  [arXiv:2603.17893](https://arxiv.org/abs/2603.17893).
+- **Reproducible install** via `requirements-pinned.txt`.
+
+### Changed
+- **`response_format` replaces `guided_json`** (deprecated in vLLM v0.12.0).
+  Reasoning enabled server-side via `--reasoning-parser qwen3`.
+- **Bounded LLM response schemas** — all structured-output schemas now set
+  `max_length` / `maxItems` / `Literal` constraints to prevent JSON truncation
+  under tight thinking budgets.
+  See [CONSTRAINED_DECODING.md](./src/scicode_lint/llm/CONSTRAINED_DECODING.md#schema-bounds-max_length-and-max_items-are-mandatory).
+- **Qwen3 reasoning alignment** — `thinking_effort` now uses top-level
+  `reasoning_effort` (OpenAI standard); `enable_thinking: False` passed
+  explicitly when `thinking_budget=0`.
+- **Dependency minimums raised** to match tested dev env. Adds `rich>=14.0.0`.
+- **License metadata** modernized to PEP 639 SPDX form.
+
+### Fixed
+- **vLLM v0.18+ compatibility** — no longer passes removed `--enable-reasoning`
+  flag (now implicit when `--reasoning-parser` is set).
+- **`vllm-server monitor`** stays open during model load instead of exiting on
+  first failed health check.
+
+### Removed
+- **Native-subprocess vLLM launcher** — container launcher is now the only
+  supported path.
+- **Google Colab setup instructions** — Colab lacks a container runtime.
+- **Hardcoded config fallbacks** — `config.toml` is the single source of truth;
+  missing values raise `RuntimeError`.
+- **`[vllm-server]` pip extra** — vLLM runs inside the container, not as a pip
+  dependency.
+
+### Packaging
+- **Production-only sdist** — `pip download scicode-lint` returns just runtime
+  + user-facing metadata. Tests, evals, and pattern verification stay in the
+  git repo.
+
 ## [0.2.3] - 2026-03-18
 
 ### Added
@@ -146,12 +252,12 @@ End-to-end pipeline for validating scicode-lint on real scientific ML code:
 
 ### Added
 - **Deterministic pattern validation** (`pattern_verification/deterministic/validate.py`) - 9 structural checks for pattern quality
-- **Dependency Health Checker** (`tools/check_dependencies.py`) - security auditing with pip-audit, safety, bandit, and deprecation warning capture
+- **Dependency Health Checker** (`scripts/check_dependencies.py`) - security auditing with pip-audit, safety, bandit, and deprecation warning capture
 - **vLLM Monitoring Dashboard** (`tools/vllm_dashboard.py`) - Streamlit real-time metrics (requests, throughput, KV cache, GPU utilization) with time-series charts
 - **Alignment Metrics** in evaluation - tracks agreement between direct metrics and LLM judge, highlights divergent cases
 - **Dynamic integration evaluation** (`evals/integration/dynamic_eval.py`) - generates fresh test code via Claude to avoid overfitting
 - **Improvement Insights notepad** (`docs_dev_genai/IMPROVEMENT_INSIGHTS.md`) - persistent learnings across sessions
-- **Release script** (`scripts/release.sh`) - automates package build and GitHub release
+- **Release automation** - automates package build and GitHub release
 - LLM reasoning output in verbose mode (`--verbose`)
 - Three-tier evaluation methodology docs (pattern-specific → static integration → dynamic integration)
 
@@ -183,8 +289,7 @@ End-to-end pipeline for validating scicode-lint on real scientific ML code:
   - Critical rules that must never be broken (data leakage detection, etc.)
 
 ### Changed
-- Updated `CLAUDE.md` with brief reference to continuous improvement workflow
-- Updated `docs_dev_genai/TOOLS.md` with link to new documentation
+- Added brief reference to continuous improvement workflow in contributor docs
 
 ### Fixed
 - **rep-001-incomplete-random-seeds**: Added proper test case for `train_test_split()` missing `random_state` (previous test cases were checking unrelated incomplete seeding issue)
@@ -232,12 +337,13 @@ Initial public release.
 - Evaluation framework with precision/recall metrics
 - Designed for both human developers and AI coding agents
 
-[0.2.1]: https://github.com/ssamsonau/scicode-lint/releases/tag/v0.2.1
-[0.2.0]: https://github.com/ssamsonau/scicode-lint/releases/tag/v0.2.0
-[0.1.6]: https://github.com/ssamsonau/scicode-lint/releases/tag/v0.1.6
-[0.1.5]: https://github.com/ssamsonau/scicode-lint/releases/tag/v0.1.5
-[0.1.4]: https://github.com/ssamsonau/scicode-lint/releases/tag/v0.1.4
-[0.1.3]: https://github.com/ssamsonau/scicode-lint/releases/tag/v0.1.3
-[0.1.2]: https://github.com/ssamsonau/scicode-lint/releases/tag/v0.1.2
-[0.1.1]: https://github.com/ssamsonau/scicode-lint/releases/tag/v0.1.1
-[0.1.0]: https://github.com/ssamsonau/scicode-lint/releases/tag/v0.1.0
+[0.3.0]: https://github.com/authentic-research-partners/scicode-lint/releases/tag/v0.3.0
+[0.2.1]: https://github.com/authentic-research-partners/scicode-lint/releases/tag/v0.2.1
+[0.2.0]: https://github.com/authentic-research-partners/scicode-lint/releases/tag/v0.2.0
+[0.1.6]: https://github.com/authentic-research-partners/scicode-lint/releases/tag/v0.1.6
+[0.1.5]: https://github.com/authentic-research-partners/scicode-lint/releases/tag/v0.1.5
+[0.1.4]: https://github.com/authentic-research-partners/scicode-lint/releases/tag/v0.1.4
+[0.1.3]: https://github.com/authentic-research-partners/scicode-lint/releases/tag/v0.1.3
+[0.1.2]: https://github.com/authentic-research-partners/scicode-lint/releases/tag/v0.1.2
+[0.1.1]: https://github.com/authentic-research-partners/scicode-lint/releases/tag/v0.1.1
+[0.1.0]: https://github.com/authentic-research-partners/scicode-lint/releases/tag/v0.1.0

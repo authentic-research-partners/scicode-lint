@@ -51,10 +51,10 @@ from scicode_lint.repo_filter.classify import (
     classify_file,
 )
 from scicode_lint.repo_filter.scan import (
-    ML_IMPORT_KEYWORDS,
     RepoScanSummary,
     ScanResult,
     filter_scan_results,
+    get_ml_import_keywords,
     get_self_contained_files,
     has_ml_imports,
     scan_repo_for_ml_files,
@@ -67,10 +67,10 @@ __all__ = [
     "FileClassification",
     "classify_file",
     # Scanning
-    "ML_IMPORT_KEYWORDS",
     "RepoScanSummary",
     "ScanResult",
     "filter_scan_results",
+    "get_ml_import_keywords",
     "get_self_contained_files",
     "has_ml_imports",
     "scan_repo_for_ml_files",

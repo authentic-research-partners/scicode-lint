@@ -23,7 +23,6 @@ results = await asyncio.gather(*tasks)
 **All patterns AND test files evaluated concurrently:**
 - All ~66 patterns evaluated in parallel (not sequentially)
 - Each pattern's ~5 test files also run in parallel
-- Total: ~220 concurrent requests to vLLM
 - Semaphore limits max concurrent to avoid overwhelming system
 
 **Implementation:**
@@ -33,14 +32,14 @@ pattern_tasks = [evaluator.evaluate_pattern(pid) for pid in pattern_ids]
 all_results = await asyncio.gather(*pattern_tasks)
 
 # Each pattern evaluates test files concurrently (with semaphore)
-async with self._semaphore:  # Default: 200 concurrent
+async with self._semaphore:  # Default: 100 concurrent
     linter_output = await self.run_linter(test_file)
     verdict = await self.llm.async_complete_structured(...)
 ```
 
 **Configure concurrency:**
 ```bash
-# Default: 200 concurrent evaluations (tuned for Qwen3-8B ~9GB model)
+# Default: 100 concurrent evaluations (tuned for Qwen3-8B ~9GB model)
 python -m evals.run_eval_llm_judge
 
 # Lower for memory-constrained systems or larger models

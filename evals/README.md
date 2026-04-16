@@ -325,7 +325,7 @@ python evals/run_eval.py --pattern ml-001
 - [patterns/](../src/scicode_lint/patterns/) - Pattern definitions and test data
 - [tests/](../tests/) - Deterministic unit tests
 - [benchmarks/](../benchmarks/) - Performance benchmarks
-- [ARCHITECTURE.md](../docs_dev_genai/ARCHITECTURE.md) - System design
+- [ARCHITECTURE.md](../docs/dev/ARCHITECTURE.md) - System design
 
 ## Choosing the Right Evaluation
 

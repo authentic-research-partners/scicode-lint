@@ -11,7 +11,10 @@ class JudgeVerdict(BaseModel):
     verdict: Literal["yes", "no", "partial"] = Field(
         description="Whether linter output matches test case intent"
     )
-    reasoning: str = Field(description="One sentence explaining the verdict")
+    reasoning: str = Field(
+        max_length=400,
+        description="One sentence (1-2 sentences) explaining the verdict",
+    )
     confidence: float = Field(
         ge=0.0, le=1.0, description="Judge's confidence in this verdict (0.0-1.0)"
     )

@@ -93,13 +93,15 @@ Qwen3-8B outperforms larger models on code-related tasks:
 
 ### vLLM Setup
 
+The default model, optimization flags, and sampling parameters are all configured in
+the bundled `config.toml` and launched via the container command:
+
 ```bash
-vllm serve RedHatAI/Qwen3-8B-FP8-dynamic \
-    --max-model-len 20000 \
-    --gpu-memory-utilization 0.85 \
-    --kv-cache-dtype fp8 \
-    --enable-chunked-prefill
+scicode-lint vllm-server start
 ```
+
+See [INSTALLATION.md](../INSTALLATION.md) for the container-runtime prerequisites. The
+flags the container passes to vLLM are documented in the next section.
 
 **Optimization flags:**
 
@@ -145,16 +147,26 @@ Increase to 8K or 16K in `config.toml` if you see truncated thinking warnings.
 | **Qwen3-Coder-30B-A3B** | ~15-16GB | Code-specific MoE |
 | **Devstral-Small-2-24B** | ~24GB | Best SWE-Bench for size |
 
-```bash
-# Qwen3-14B-FP8
-vllm serve Qwen/Qwen3-14B-FP8 --max-model-len 8192 --gpu-memory-utilization 0.95
+To use a non-default model, override `[llm].model` and related keys in
+`~/.config/scicode-lint/config.toml`, then restart the container:
 
-# Qwen3-Coder-30B-A3B (all 30B weights load, "3B active" reduces compute not memory)
-vllm serve Qwen/Qwen3-Coder-30B-A3B-Instruct-FP8 --max-model-len 32768 --gpu-memory-utilization 0.95
+```toml
+# ~/.config/scicode-lint/config.toml
+[llm]
+model = "Qwen/Qwen3-14B-FP8"
 
-# Devstral-Small-2-24B
-vllm serve mistralai/Devstral-Small-2-24B-Instruct-2512 --max-model-len 16384 --tokenizer-mode mistral
+[vllm]
+max_model_len = 8192
+gpu_memory_utilization = 0.95
 ```
+
+```bash
+scicode-lint vllm-server restart
+```
+
+Non-Qwen3 models also need their own reasoning parser (or none). Set
+`[vllm].reasoning_parser = ""` for non-thinking models, or set the model-specific
+parser value vLLM expects.
 
 ### Less VRAM (< 16GB)
 

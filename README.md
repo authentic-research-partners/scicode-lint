@@ -4,6 +4,8 @@
 
 Runs locally on your GPU or institutional cluster. No cloud APIs, your code stays private, no unexpected GenAI bills.
 
+📄 **Paper:** [Samsonau, *scicode-lint: Detecting Methodology Bugs in Scientific Python Code with LLM-Generated Patterns* (arXiv:2603.17893)](https://arxiv.org/abs/2603.17893) — BibTeX in the Citation section below.
+
 ---
 
 ## TL;DR
@@ -11,12 +13,24 @@ Runs locally on your GPU or institutional cluster. No cloud APIs, your code stay
 Local LLM linter for scientific ML code. Catches data leakage, missing seeds, numerical bugs. Runs on your GPU (16GB+ VRAM), code stays private.
 
 ```bash
-pip install scicode-lint                  # Use with remote vLLM server
-# or
-pip install scicode-lint[vllm-server]     # Run vLLM locally (16GB+ GPU)
+uv tool install scicode-lint --python 3.13   # Recommended; uv installs Python 3.13 if needed
 
-scicode-lint lint train.py               # Check a file for issues
+# Local vLLM also needs podman (or docker) + nvidia-container-toolkit
+sudo apt install podman nvidia-container-toolkit
+scicode-lint vllm-server start               # Starts vLLM in a container
+scicode-lint lint train.py                   # Check a file for issues
 ```
+
+---
+
+## For GenAI Agents
+
+scicode-lint is designed for programmatic use by AI coding agents. Two entry points, same structured data:
+
+- **CLI, machine-readable:** `scicode-lint lint file.py --format json` emits a list of `LintResult` objects (findings + per-file errors). Exit codes follow linter convention — `0` clean, `1` findings, `2` tool/runtime error — so CI can branch on outcome. See [Exit codes](docs/USAGE.md#lint) and [Errors in JSON output](docs/USAGE.md#errors-in-json-output).
+- **Python API:** `from scicode_lint import SciCodeLinter`, then `linter.check_file(path)` returns a typed `LintResult` (no subprocess). Catch `scicode_lint.exceptions.SciCodeLintError` for all documented failure modes (`LLMConnectionError`, `ContextLengthError`, `NotebookParseError`, …). See [Error Handling](docs/USAGE.md#error-handling).
+
+Full reference: [USAGE.md](docs/USAGE.md) (CLI + Python API in one guide) and [API_REFERENCE.md](docs/API_REFERENCE.md).
 
 ---
 
@@ -62,39 +76,46 @@ test_scaler.py — 1 issue found
 ### Prerequisites
 
 - GPU with 16GB+ VRAM and native FP8 support (RTX 4060 Ti 16GB, RTX 4070+, RTX 4090, L4, etc.)
-- vLLM 0.17+ with RedHatAI/Qwen3-8B-FP8-dynamic (default model)
+- **Container runtime**: `podman` (or `docker`) + `nvidia-container-toolkit` — vLLM runs in a container with GPU passthrough. One-time install: `sudo apt install podman nvidia-container-toolkit`.
+- Default model: `RedHatAI/Qwen3-8B-FP8-dynamic` (first run auto-downloads ~8GB into the container image).
 
-See [INSTALLATION.md](INSTALLATION.md) for detailed setup.
+Skip the container runtime if you're pointing at a remote vLLM server instead.
+
+See [INSTALLATION.md](https://github.com/authentic-research-partners/scicode-lint/blob/main/INSTALLATION.md) for detailed setup.
 
 ### Installation
 
 ```bash
-# With local vLLM server (runs on your GPU)
-pip install scicode-lint[vllm-server]
+# Recommended: uv tool install (fast, isolated, manages Python itself)
+uv tool install scicode-lint --python 3.13
 
-# Or with remote vLLM server (e.g., university/institutional server)
+# Alternative (if you prefer pip or already have Python 3.13 set up)
 pip install scicode-lint
-scicode-lint lint my_code.py --vllm-url https://vllm.your-institution.edu
 
-# For development
-git clone https://github.com/ssamsonau/scicode-lint.git
-cd scicode-lint
-pip install -e ".[all]"
+# For local use: install container runtime (one-time, see Prerequisites above)
+sudo apt install podman nvidia-container-toolkit
+
+# For remote vLLM (e.g., university/institutional server):
+scicode-lint lint my_code.py --vllm-url https://vllm.your-institution.edu
 ```
+
+For development install or exact version reproducibility, see
+[INSTALLATION.md → Development install](https://github.com/authentic-research-partners/scicode-lint/blob/main/INSTALLATION.md#development-install) and
+[INSTALLATION.md → Reproducible environment](https://github.com/authentic-research-partners/scicode-lint/blob/main/INSTALLATION.md#reproducible-environment-requirements-pinnedtxt).
 
 ### Start vLLM Server
 
 Before running scicode-lint, start the vLLM server (skip if using remote server):
 
 ```bash
-# Start vLLM server (auto-detects GPU, validates FP8 support)
+# Start vLLM container (auto-detects podman or docker; first run downloads ~8GB)
 scicode-lint vllm-server start
 
-# Or run in background
-nohup scicode-lint vllm-server start > /tmp/vllm.log 2>&1 &
+# Watch it come up, then live metrics once the model is loaded
+scicode-lint vllm-server monitor
 ```
 
-The server auto-detects your GPU and configures optimal settings. First run downloads the model (~8GB).
+The container is persistent (`--restart unless-stopped`), so it survives reboots. Other lifecycle commands: `stop`, `restart`, `status`, `logs`, `rm`.
 
 ### Usage
 
@@ -142,7 +163,7 @@ Two-stage filter (runs automatically):
 
 ## Project Status
 
-**Work in Progress** (v0.2.3 alpha)
+**Work in Progress** (v0.3.0 alpha)
 
 | Test Type | Precision | Recall | Description |
 |-----------|-----------|--------|-------------|
@@ -152,7 +173,7 @@ Two-stage filter (runs automatically):
 | Published papers (iteration) | 62.0% | - | 32 repos analyzed (120 files); used for pattern refinement |
 | Published papers (holdout) | 54.1% | - | 17 repos analyzed (45 files); unseen during development |
 
-Example reports: [`real_world_demo/output_examples/`](real_world_demo/output_examples/)
+Example reports: [`real_world_demo/output_examples/`](https://github.com/authentic-research-partners/scicode-lint/tree/main/real_world_demo/output_examples)
 
 ---
 
@@ -169,22 +190,21 @@ Traditional linters use grep-style pattern matching - fast but misses context. C
 
 **How patterns run:** Each pattern is a focused detection question in a TOML file. All 66 patterns run concurrently - vLLM's prefix caching means your code is processed once and shared across all checks. Processing N patterns takes approximately the time of 1 pattern.
 
-**Design goal:** Patterns are grounded in official documentation (PyTorch docs, scikit-learn guides, NumPy API references). See [ARCHITECTURE.md](docs_dev_genai/ARCHITECTURE.md) for technical details.
+**Design goal:** Patterns are grounded in official documentation (PyTorch docs, scikit-learn guides, NumPy API references). See [ARCHITECTURE.md](https://github.com/authentic-research-partners/scicode-lint/blob/main/docs/dev/ARCHITECTURE.md) for technical details.
 
 ---
 
 ## Documentation
 
-- 📖 [DOCUMENTATION_MAP.md](DOCUMENTATION_MAP.md): find all documentation
-- 🚀 [INSTALLATION.md](INSTALLATION.md): detailed setup guide
-- 📘 [docs_use_human/USAGE.md](docs_use_human/USAGE.md): CLI usage guide
-- 🤖 [docs_use_genai/GENAI_AGENT_GUIDE.md](docs_use_genai/GENAI_AGENT_GUIDE.md): for AI coding agents
-- 🏗️ [CONTRIBUTING.md](CONTRIBUTING.md): adding new patterns
-- 📊 [evals/README.md](evals/README.md): pattern evaluation framework
-- 🔬 [evals/integration/README.md](evals/integration/README.md): integration tests
-- 📈 [docs_dev_genai/CONTINUOUS_IMPROVEMENT.md](docs_dev_genai/CONTINUOUS_IMPROVEMENT.md): pattern quality improvement workflow
-- 📊 [docs_use_human/performance/VLLM_MONITORING.md](docs_use_human/performance/VLLM_MONITORING.md): vLLM monitoring dashboard
-- 🌐 [real_world_demo/README.md](real_world_demo/README.md): real-world validation on scientific ML code from PapersWithCode repos and Yang et al. ASE'22 leakage paper (79% F1 on preprocessing leakage detection)
+- 📖 [DOCUMENTATION_MAP.md](https://github.com/authentic-research-partners/scicode-lint/blob/main/DOCUMENTATION_MAP.md): find all documentation
+- 🚀 [INSTALLATION.md](https://github.com/authentic-research-partners/scicode-lint/blob/main/INSTALLATION.md): detailed setup guide
+- 📘 [docs/USAGE.md](https://github.com/authentic-research-partners/scicode-lint/blob/main/docs/USAGE.md): CLI + Python API usage guide (for humans and AI coding agents)
+- 🏗️ [CONTRIBUTING.md](https://github.com/authentic-research-partners/scicode-lint/blob/main/CONTRIBUTING.md): adding new patterns
+- 📊 [evals/README.md](https://github.com/authentic-research-partners/scicode-lint/blob/main/evals/README.md): pattern evaluation framework
+- 🔬 [evals/integration/README.md](https://github.com/authentic-research-partners/scicode-lint/blob/main/evals/integration/README.md): integration tests
+- 📈 [docs/dev/CONTINUOUS_IMPROVEMENT.md](https://github.com/authentic-research-partners/scicode-lint/blob/main/docs/dev/CONTINUOUS_IMPROVEMENT.md): pattern quality improvement workflow
+- 📊 [docs/performance/VLLM_MONITORING.md](https://github.com/authentic-research-partners/scicode-lint/blob/main/docs/performance/VLLM_MONITORING.md): vLLM monitoring dashboard
+- 🌐 [real_world_demo/README.md](https://github.com/authentic-research-partners/scicode-lint/blob/main/real_world_demo/README.md): real-world validation on scientific ML code from PapersWithCode repos and Yang et al. ASE'22 leakage paper (79% F1 on preprocessing leakage detection)
 
 ---
 
@@ -206,19 +226,7 @@ Each pattern lives in `src/scicode_lint/patterns/{category}/{id}/` and needs:
 - `pattern.toml`: the detection question and warning message
 - Test files: examples of buggy code (positive), correct code (negative), and edge cases (context-dependent)
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide.
-
----
-
-## Releasing
-
-To create a new release (maintainers only):
-
-1. Update version in `pyproject.toml`
-2. Update `CHANGELOG.md`
-3. Commit and run: `./scripts/release.sh`
-
-The script checks prerequisites, builds the package, creates a git tag, and publishes a GitHub release.
+See [CONTRIBUTING.md](https://github.com/authentic-research-partners/scicode-lint/blob/main/CONTRIBUTING.md) for the full guide.
 
 ---
 
@@ -226,8 +234,26 @@ The script checks prerequisites, builds the package, creates a git tag, and publ
 
 GenAI-native development with Claude Code. Patterns are generated and iterated by AI agents within human-designed evaluation frameworks and quality gates.
 
-- **Fast loop:** [CONTINUOUS_IMPROVEMENT.md](docs_dev_genai/CONTINUOUS_IMPROVEMENT.md) - Iterate on synthetic test files
-- **Meta loop:** [META_IMPROVEMENT_LOOP.md](docs_dev_genai/META_IMPROVEMENT_LOOP.md) - Validate on real Papers with Code + Claude verification
+- **Fast loop:** [CONTINUOUS_IMPROVEMENT.md](https://github.com/authentic-research-partners/scicode-lint/blob/main/docs/dev/CONTINUOUS_IMPROVEMENT.md) - Iterate on synthetic test files
+- **Meta loop:** [META_IMPROVEMENT_LOOP.md](https://github.com/authentic-research-partners/scicode-lint/blob/main/docs/dev/META_IMPROVEMENT_LOOP.md) - Validate on real Papers with Code + Claude verification
+
+---
+
+## Citation
+
+If you use scicode-lint in your research, please cite the companion paper:
+
+```bibtex
+@misc{samsonau2026scicodelint,
+  title        = {scicode-lint: Detecting Methodology Bugs in Scientific Python Code with LLM-Generated Patterns},
+  author       = {Samsonau, Sergey V.},
+  year         = {2026},
+  eprint       = {2603.17893},
+  archivePrefix= {arXiv},
+  primaryClass = {cs.SE},
+  url          = {https://arxiv.org/abs/2603.17893},
+}
+```
 
 ---
 

@@ -87,8 +87,12 @@ Output: `reports/max_tokens/BENCHMARK_SUMMARY.md`
 
 **Tradeoffs:**
 - **100**: Most stable (zero preemptions), ~10s slower
-- **150**: Best throughput, moderate preemptions ← **default**
+- **150**: Best throughput, moderate preemptions
 - **200**: Worst latency, most preemptions, no benefit
+
+> **Note:** Current ship default is `concurrency=100` — the "most stable" tested
+> config above (zero preemptions, peak KV cache 81.5%). Trades a few percent of
+> peak throughput vs. 150 for zero preemptions and lower TTFT.
 
 **vLLM Dashboard:**
 
@@ -96,7 +100,9 @@ Output: `reports/max_tokens/BENCHMARK_SUMMARY.md`
 
 ### File Size Benchmark (2026-03-18)
 
-**Environment:** RTX 4000 Ada (20GB), WSL2, Qwen3-8B-FP8, 3 runs per file
+**Environment:** RTX 4000 Ada (20GB), WSL2, Qwen3-8B-FP8, concurrency=150, 3 runs per file
+
+> **Note:** Numbers below were measured at concurrency=150 (the default at the time). Current ship default is 100; absolute times at 100 will be slightly higher for full-scan workloads.
 
 **Full scan (all 66 patterns):**
 
@@ -146,7 +152,7 @@ max_input_tokens = 16000
 max_completion_tokens = 4096
 
 [performance]
-max_concurrent_evals = 150   # Client semaphore (how many requests we send)
+max_concurrent_evals = 100   # Client semaphore (how many requests we send)
 vllm_max_num_seqs = 256      # vLLM server capacity (passed to --max-num-seqs)
 ```
 

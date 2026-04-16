@@ -258,7 +258,4 @@ pattern_verification/
 pattern-reviewer/                # Read-only analysis agent
 ├── agent.json
 └── system_prompt.md
-
-.claude/agents/                  # Symlinks for Claude CLI
-└── pattern-reviewer -> ../../pattern_verification/pattern-reviewer
 ```

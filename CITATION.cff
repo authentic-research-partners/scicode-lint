@@ -1,0 +1,38 @@
+cff-version: 1.2.0
+message: "If you use scicode-lint in your research, please cite the paper below."
+type: software
+title: scicode-lint
+version: 0.3.0
+date-released: "2026-04-16"
+abstract: >
+  AI-powered linter for scientific ML code. Detects methodology bugs such as
+  data leakage, incorrect cross-validation, numerical instability, and
+  reproducibility issues that produce plausible but wrong results. Runs via
+  local or institutional vLLM server, no cloud APIs.
+authors:
+  - family-names: Samsonau
+    given-names: Sergey V.
+url: "https://github.com/authentic-research-partners/scicode-lint"
+repository-code: "https://github.com/authentic-research-partners/scicode-lint"
+license: MIT
+keywords:
+  - linter
+  - scientific-computing
+  - machine-learning
+  - data-leakage
+  - methodology-bugs
+  - static-analysis
+  - vllm
+preferred-citation:
+  type: article
+  title: "scicode-lint: Detecting Methodology Bugs in Scientific Python Code with LLM-Generated Patterns"
+  authors:
+    - family-names: Samsonau
+      given-names: Sergey V.
+  year: 2026
+  month: 3
+  url: "https://arxiv.org/abs/2603.17893"
+  identifiers:
+    - type: other
+      value: "arXiv:2603.17893"
+      description: "arXiv preprint ID"

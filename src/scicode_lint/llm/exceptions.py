@@ -2,8 +2,10 @@
 
 from typing import Any
 
+from scicode_lint.exceptions import SciCodeLintError
 
-class ContextLengthError(Exception):
+
+class ContextLengthError(SciCodeLintError):
     """Raised when input exceeds model's context length.
 
     Attributes:

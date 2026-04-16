@@ -469,7 +469,7 @@ Paper set details: [`paper_sets/`](paper_sets/)
 
 The verification stage uses Claude Sonnet to evaluate whether detected findings are real issues or false positives. This provides ground truth for measuring detection precision.
 
-**See also:** [META_IMPROVEMENT_LOOP.md](../docs_dev_genai/META_IMPROVEMENT_LOOP.md) - Using verification results to systematically improve pattern detection questions.
+**See also:** [META_IMPROVEMENT_LOOP.md](../docs/dev/META_IMPROVEMENT_LOOP.md) - Using verification results to systematically improve pattern detection questions.
 
 ### How It Works
 

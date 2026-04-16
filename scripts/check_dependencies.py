@@ -8,10 +8,10 @@ Combines:
 4. Fresh venv install - capture deprecation warnings
 
 Usage:
-    python tools/check_dependencies.py
-    python tools/check_dependencies.py --groups dev,dashboard
-    python tools/check_dependencies.py --package pynvml
-    python tools/check_dependencies.py --skip-bandit --skip-warnings
+    python scripts/check_dependencies.py
+    python scripts/check_dependencies.py --groups dev,dashboard
+    python scripts/check_dependencies.py --package pynvml
+    python scripts/check_dependencies.py --skip-bandit --skip-warnings
 """
 
 import argparse

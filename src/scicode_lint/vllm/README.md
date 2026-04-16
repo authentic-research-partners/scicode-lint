@@ -13,7 +13,7 @@ Programmatic server management for GenAI agents:
 - `get_server_info()` - vLLM server status
 - `print_system_info()` - Print complete system status
 
-See [VLLM_UTILITIES.md](../../../docs_use_genai/VLLM_UTILITIES.md) for complete documentation.
+See [VLLM_UTILITIES.md](../../../docs/VLLM_UTILITIES.md) for complete documentation.
 
 ### CLI Command
 

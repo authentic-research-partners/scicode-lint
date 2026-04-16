@@ -213,10 +213,11 @@ class TestVllmIntegration:
 
         # Try to use real vLLM
         try:
+            from scicode_lint.exceptions import LLMConnectionError
             from scicode_lint.llm.client import detect_vllm
 
             detect_vllm()
-        except RuntimeError:
+        except LLMConnectionError:
             pytest.skip("vLLM server not available")
 
         result, success = extract_doc_content_with_vllm(content)

@@ -1,24 +1,10 @@
-# Constrained Decoding: Why `guided_json`
+# Constrained Decoding with `response_format: json_schema`
 
-Design decision: why we use vLLM's `guided_json` instead of OpenAI-standard `response_format: json_schema`.
+We use the OpenAI-standard `response_format: json_schema` for structured output from vLLM.
 
-Both achieve schema-constrained JSON output, but they behave differently with thinking models.
+### How it works
 
-### The two approaches
-
-**`guided_json`** (vLLM-specific, what we use):
-```python
-extra_body={"guided_json": schema}
-```
-
-**`response_format: json_schema`** (OpenAI API standard):
-```python
-response_format={"type": "json_schema", "json_schema": {...}}
-```
-
-### How constrained decoding works
-
-Both use the same backend (Outlines/XGrammar in vLLM):
+vLLM's constrained decoding (XGrammar/Outlines backend):
 
 1. Parse schema → build FSM (finite state machine)
 2. Track valid next tokens at each step
@@ -31,89 +17,209 @@ After '{"detected": ' → only allow: true, false
 After '{"detected": true' → only allow: , or }
 ```
 
-### The difference: prefix handling
+### Reasoning parser (Qwen3-specific)
 
-**`guided_json`** - allows any prefix before JSON:
-```
-<think>                    ← unconstrained
-Let me analyze line 42...
-</think>                   ← unconstrained
-{                          ← constraints start here
-"detected": true
-}
-```
+Qwen3 outputs `<think>...</think>` blocks before the JSON answer. vLLM's reasoning parser
+(`--reasoning-parser qwen3`) separates these server-side:
 
-**`json_schema`** - requires immediate JSON:
-```
-{                          ← must start immediately
-"detected": true           ← no thinking possible
-}
-```
+- `message.content` → clean JSON
+- `message.reasoning` → thinking content
 
-### Why this matters for Qwen3
+Without the reasoning parser, constrained decoding applies from the first token,
+suppressing the thinking phase and dropping accuracy from ~98% to ~78%.
 
-Qwen3 outputs visible `<think>...</think>` blocks before answering. With `json_schema`, these get suppressed because `<` is not valid JSON.
+**The `--reasoning-parser qwen3` flag is Qwen3-specific.** Other thinking models need
+their own parser (e.g., `deepseek` for DeepSeek-R1). Non-thinking models don't need
+any parser at all.
 
-| Approach | Thinking preserved | Accuracy |
-|----------|-------------------|----------|
-| `guided_json` | Yes | ~99% |
-| `json_schema` | No | ~78% |
+> **Note on vLLM version.** Setting `--reasoning-parser` alone enables reasoning
+> implicitly. In older vLLM versions (≤0.17.x) reasoning also required a separate
+> `--enable-reasoning` flag, which was removed in v0.18.0 — scicode-lint pins v0.18.0.
 
-~20% accuracy drop without thinking phase.
+### Thinking controls
 
-### OpenAI models work differently
+Two complementary controls for thinking depth, passed via `extra_body.thinking`:
 
-OpenAI's o1/o3 have **hidden** reasoning tokens (internal, not in output). So `json_schema` works fine - reasoning happens before output begins.
+- **`budget`** (int) — hard cap on thinking tokens. Abruptly stops thinking when reached.
+  Prevents runaway reasoning from exhausting `max_completion_tokens`.
+- **`effort`** (float, 0.0-1.0) — soft guide for thinking depth. The model aims for
+  shorter (0.0) or deeper (1.0) reasoning but may exceed the target.
 
-Qwen3's reasoning is **visible** → suppressed by immediate JSON constraint.
+Use both together: effort guides depth, budget prevents worst-case.
 
-### Our choice
+| Use case | budget | effort | Rationale |
+|----------|--------|--------|-----------|
+| Detection (lint) | 3584 | (default) | Complex code analysis, let model decide depth |
+| Classification | 200 | 0.3 | Simple binary decisions, minimize thinking |
 
-We use `guided_json` because:
-1. Preserves thinking phase (critical for accuracy)
-2. Same underlying constrained decoding quality
-3. We're committed to vLLM (no portability concern)
+`thinking_budget` is configured in `config.toml`. `thinking_effort` defaults to None
+(model's own behavior) and should only be passed per-call for simple tasks.
 
-### Other vLLM constrained decoding options
+### Why `response_format` (not `guided_json`)
 
-| Option | Constrains to | Allows thinking prefix | Use case |
-|--------|---------------|----------------------|----------|
-| `guided_json` | JSON schema | With reasoning parser¹ | Structured output |
-| `guided_choice` | One of N strings | No | Simple classification |
-| `guided_regex` | Regex pattern | With reasoning parser¹ | IDs, formatted strings |
-| `guided_grammar` | Context-free grammar | Unknown | SQL, custom formats |
-
-¹ Requires v0 engine with `--enable-reasoning --reasoning-parser`. See [vLLM reasoning docs](https://docs.vllm.ai/en/v0.8.4/features/reasoning_outputs.html).
-
-**Important**: By default, all guided decoding options apply constraints from the first token. The `guided_json` vs `json_schema` difference we observe with Qwen3 may be implementation-specific. Both `guided_choice` and `guided_regex` require immediate constrained output without the reasoning parser, skipping the thinking phase.
-
-**Deprecation note**: Starting with vLLM ~0.8.5+, `guided_*` parameters are being deprecated in favor of unified `structured_outputs` format.
+Both use the same XGrammar/Outlines backend. `guided_json` (passed via `extra_body`) was vLLM-specific and is deprecated as of vLLM v0.12.0. `response_format: json_schema` is the OpenAI-standard API, portable across providers.
 
 ### Pydantic schemas are mandatory
 
-Always use Pydantic models to generate JSON schemas for `guided_json`. Hand-written schemas may have subtle issues that cause unreliable constraint enforcement.
+Always use Pydantic models to generate JSON schemas. Hand-written schemas may have subtle issues that cause unreliable constraint enforcement.
+
+### `$ref` inlining via `vllm_schema()`
+
+Pydantic generates `$ref` entries for nested models (e.g., `DetectionResult.location`
+references `NamedLocation` via `$ref: "#/$defs/NamedLocation"`). vLLM's XGrammar
+backend may not resolve `$defs` — it expects a flat schema.
+
+**Always use `vllm_schema()` instead of `model.model_json_schema()`** when passing
+schemas to vLLM. This function inlines all `$ref` references and strips Pydantic
+metadata (`title` fields).
 
 ```python
-from pydantic import BaseModel, Field
+from scicode_lint.llm.models import vllm_schema, DetectionResult
 
-class FilterResult(BaseModel):
-    is_pipeline: bool = Field(description="True if code is ML pipeline")
-
-# Use Pydantic-generated schema
-extra_body={"guided_json": FilterResult.model_json_schema()}
+# Use vllm_schema() — NOT model_json_schema()
+response_format={
+    "type": "json_schema",
+    "json_schema": {
+        "name": "DetectionResult",
+        "schema": vllm_schema(DetectionResult),
+        "strict": True,
+    },
+}
 ```
 
-Pydantic schemas include:
-- Proper `title` fields for each property
-- Consistent `type` annotations
-- `required` array automatically generated
-- Field descriptions for better model understanding
+Regression tests in `tests/test_schema_bounds.py` verify no `$ref` entries remain
+after inlining.
 
-All use same Outlines/XGrammar backend.
+### Schema bounds: `max_length` and `max_items` are mandatory
+
+Every string field in a response schema gets `Field(max_length=N)`, and every
+`list[X]` field gets both `Field(max_length=N)` (list size) and per-item bounds
+via `Annotated[str, StringConstraints(max_length=M)]`. These are enforced at
+the decoder level by XGrammar and make the response size bounded and
+predictable. This is **not optional** — without it, a verbose field or a
+runaway list can blow through the JSON-response portion of `max_completion_tokens`.
+
+### The three failure modes
+
+With thinking enabled, vLLM generates in two phases that share a single
+`max_completion_tokens` budget:
+
+```
+<think>reasoning tokens...</think>{"detected":"yes","reasoning":"...",...}
+|____________ phase 1: thinking ________||______ phase 2: JSON response _____|
+```
+
+| Limit hit | `finish_reason` | `content` |
+|---|---|---|
+| thinking budget | `stop` | valid JSON |
+| `max_completion_tokens` during thinking | `length` | **`None`** |
+| `max_completion_tokens` during JSON | `length` | **partial/invalid JSON** |
+
+The surprising case is the second: if thinking consumes the entire budget
+before JSON generation starts, you don't get partial JSON — you get
+`content=None` and the model is still in the `<think>` parser state when
+generation stops. Empirical findings on Qwen3 8B / vLLM v0.18.0:
+
+```
+max_tokens=100, budget=200  → content=None      (still thinking at token 100)
+max_tokens=300, budget=4096 → content=partial   (JSON started but truncated)
+max_tokens=500, budget=4096 → content=valid JSON
+```
+
+### Transient retry
+
+The client retries on two transient failure modes:
+
+1. **Empty content** (`content=None`) — thinking consumed the entire `max_completion_tokens`
+   budget before JSON generation started. This is the dominant failure mode.
+2. **Invalid JSON** (`JSONDecodeError`) — rare network glitch or vLLM streaming bug.
+   Constrained decoding should prevent this, but transient failures occur in practice.
+
+`_TRANSIENT_RETRIES = 2` (3 total attempts). Exponential backoff: 0.5s, 1.0s.
+After all transient retries are exhausted, the error is raised.
+
+Non-transient errors (schema validation, missing location) are handled separately
+and are not retried by this loop. Missing-location errors trigger a correction prompt
+retry (different mechanism).
+
+### Prompt mirror pattern
+
+For every decoder-enforced cap (list `maxItems`, string `maxLength`), the prompt
+carries matching soft guidance. The decoder enforces the hard cap; the prompt
+decides which content survives when the cap bites. Examples:
+
+- List cap → "at most N items, most important first"
+- String cap → "under N words" or "1-2 sentences"
+
+If the cap never bites, the model writes naturally below the limit.
+
+### Why `max_length` has no token cost
+
+The `maxLength` JSON-schema keyword counts **characters**, not tokens, and
+behaves as a ceiling when set generously above natural output length.
+Empirical measurement on Qwen3 8B (n=10 runs per setting, thinking=low, max_tokens=2048):
+
+```
+maxLength=none:  mean=438  stdev=41
+maxLength=150:   mean=404  stdev=30
+maxLength=500:   mean=452  stdev=54
+maxLength=1000:  mean=436  stdev=49
+```
+
+All means within one standard deviation — `max_length` neither saves nor
+costs tokens when set at ~2x natural output. The value of bounding every
+field is **predictability**: guaranteed JSON completion inside the response
+budget, so no retry mechanism is needed for truncation. The schema itself
+prevents it.
+
+### Sizing for scicode-lint
+
+scicode-lint allocates `max_completion_tokens=4096` with
+`thinking_budget=3584` for detection (see `config.py`), leaving ~512 tokens
+for the JSON response. Current bounded schemas (see `llm/models.py`):
+
+| Schema | Worst-case response tokens | Headroom |
+|---|---|---|
+| `DetectionResult` | ~225 | ~287 tokens |
+| `FileClassification` | ~380 | ~130 tokens |
+
+Both fit comfortably, and thinking can use its full 3584-token budget without
+risk of phase-2 truncation.
+
+### Checklist when adding a new vLLM call site
+
+1. **Define the response schema** as a Pydantic `BaseModel`. Every `str` field
+   gets `Field(max_length=N)` at ~2x natural output. Every `list[X]` field gets
+   `Field(max_length=N)` (emits `maxItems: N`) AND per-item bounds if `X` is `str`
+   (use `Annotated[str, StringConstraints(max_length=M)]`).
+2. **Use `vllm_schema()`** to generate the JSON schema — not `model_json_schema()`.
+3. **Compute the worst-case token count** (`chars / 3 + JSON overhead`) and verify
+   it's ≤ `max_completion_tokens − thinking_budget`.
+4. **Numerics** get `ge=/le=` bounds where meaningful (e.g., confidence 0-1).
+5. **Nullable fields populated post-hoc** from side channels (e.g.,
+   `DetectionResult.thinking`) stay unbounded.
+6. **Add schema-bounds regression tests** in `tests/test_schema_bounds.py`. Assert
+   `maxLength` and `maxItems` values with failure messages pointing here.
+7. **Add a prompt mirror.** For every list cap, the prompt says "at most N, most
+   important first". For string caps, "under N words".
+8. **Add retry-behavior tests** if using a custom call path (the standard
+   `async_complete_structured()` handles transient retries automatically).
+9. **Avoid the budget valley of death.** Mid-range thinking budgets (512-1024) cause
+   more truncation than low (200) or high (2048+). Stick to low or high.
+
+### Other vLLM constrained decoding options
+
+| Option | Constrains to | Use case |
+|--------|---------------|----------|
+| `json_schema` | JSON schema | Structured output |
+| `guided_choice` | One of N strings | Simple classification |
+| `guided_regex` | Regex pattern | IDs, formatted strings |
+| `guided_grammar` | Context-free grammar | SQL, custom formats |
+
+All use same XGrammar/Outlines backend.
 
 ### References
 
-- vLLM structured outputs: https://docs.vllm.ai/en/v0.8.2/features/structured_outputs.html
-- vLLM reasoning outputs: https://docs.vllm.ai/en/v0.8.4/features/reasoning_outputs.html
-- Outlines: https://github.com/dottxt-ai/outlines
+- vLLM structured outputs: https://docs.vllm.ai/en/latest/features/structured_outputs/
+- vLLM reasoning outputs: https://docs.vllm.ai/en/latest/features/reasoning_outputs/
 - XGrammar: https://github.com/mlc-ai/xgrammar

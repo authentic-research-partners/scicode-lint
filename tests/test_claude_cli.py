@@ -174,20 +174,26 @@ class TestArunJson:
         assert result == inner
 
     async def test_invalid_outer_json_raises(self) -> None:
-        """Invalid outer JSON should raise ClaudeCLIParseError."""
+        """Invalid outer JSON should raise ClaudeCLIParseError after retries."""
         mock_proc = _make_mock_proc(stdout=b"not json")
 
-        with patch("dev_lib.claude_cli.asyncio.create_subprocess_exec", return_value=mock_proc):
+        with (
+            patch("dev_lib.claude_cli.asyncio.create_subprocess_exec", return_value=mock_proc),
+            patch("dev_lib.claude_cli.asyncio.sleep", new_callable=AsyncMock),
+        ):
             cli = ClaudeCLI()
             with pytest.raises(ClaudeCLIParseError, match="outer JSON"):
                 await cli.arun_json("test")
 
     async def test_no_inner_json_raises(self) -> None:
-        """Missing inner JSON should raise ClaudeCLIParseError."""
+        """Missing inner JSON should raise ClaudeCLIParseError after retries."""
         outer = {"result": "No JSON here, just text."}
         mock_proc = _make_mock_proc(stdout=json.dumps(outer).encode())
 
-        with patch("dev_lib.claude_cli.asyncio.create_subprocess_exec", return_value=mock_proc):
+        with (
+            patch("dev_lib.claude_cli.asyncio.create_subprocess_exec", return_value=mock_proc),
+            patch("dev_lib.claude_cli.asyncio.sleep", new_callable=AsyncMock),
+        ):
             cli = ClaudeCLI()
             with pytest.raises(ClaudeCLIParseError, match="No JSON object"):
                 await cli.arun_json("test")
@@ -220,12 +226,97 @@ class TestArunJson:
         """ClaudeCLIParseError should chain the original JSONDecodeError."""
         mock_proc = _make_mock_proc(stdout=b"not valid json")
 
-        with patch("dev_lib.claude_cli.asyncio.create_subprocess_exec", return_value=mock_proc):
+        with (
+            patch("dev_lib.claude_cli.asyncio.create_subprocess_exec", return_value=mock_proc),
+            patch("dev_lib.claude_cli.asyncio.sleep", new_callable=AsyncMock),
+        ):
             cli = ClaudeCLI()
             with pytest.raises(ClaudeCLIParseError) as exc_info:
                 await cli.arun_json("test")
             assert exc_info.value.__cause__ is not None
             assert isinstance(exc_info.value.__cause__, json.JSONDecodeError)
+
+
+class TestArunJsonTransientRetry:
+    """Tests for arun_json retry on transient JSON parse failures."""
+
+    async def test_retries_bad_then_succeeds(self) -> None:
+        """Should retry on parse error and succeed when next attempt is valid."""
+        inner = {"patterns": ["pt-001"]}
+        good_stdout = json.dumps({"result": json.dumps(inner)}).encode()
+        bad = _make_mock_proc(stdout=b"not json")
+        good = _make_mock_proc(stdout=good_stdout)
+
+        with (
+            patch(
+                "dev_lib.claude_cli.asyncio.create_subprocess_exec",
+                side_effect=[bad, good],
+            ),
+            patch("dev_lib.claude_cli.asyncio.sleep", new_callable=AsyncMock),
+        ):
+            cli = ClaudeCLI()
+            result = await cli.arun_json("test")
+
+        assert result == inner
+
+    async def test_retries_exhausted_raises(self) -> None:
+        """Should raise after all retry attempts return bad JSON."""
+        from dev_lib.claude_cli import _CLAUDE_TRANSIENT_RETRIES
+
+        bad = _make_mock_proc(stdout=b"not json")
+
+        with (
+            patch(
+                "dev_lib.claude_cli.asyncio.create_subprocess_exec",
+                side_effect=[bad] * (_CLAUDE_TRANSIENT_RETRIES + 1),
+            ),
+            patch("dev_lib.claude_cli.asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
+        ):
+            cli = ClaudeCLI()
+            with pytest.raises(ClaudeCLIParseError):
+                await cli.arun_json("test")
+
+        # Should have slept between attempts (N retries = N sleeps)
+        assert mock_sleep.call_count == _CLAUDE_TRANSIENT_RETRIES
+
+    async def test_no_retry_on_success(self) -> None:
+        """No retry when the first attempt succeeds."""
+        inner = {"key": "value"}
+        good = _make_mock_proc(stdout=json.dumps({"result": json.dumps(inner)}).encode())
+
+        with (
+            patch(
+                "dev_lib.claude_cli.asyncio.create_subprocess_exec",
+                return_value=good,
+            ) as mock_exec,
+            patch("dev_lib.claude_cli.asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
+        ):
+            cli = ClaudeCLI()
+            result = await cli.arun_json("test")
+
+        assert result == inner
+        assert mock_exec.call_count == 1
+        assert mock_sleep.call_count == 0
+
+    async def test_timeout_not_retried(self) -> None:
+        """Timeout errors should NOT trigger retries (not transient)."""
+        mock_proc = AsyncMock()
+        mock_proc.communicate.side_effect = TimeoutError
+        mock_proc.kill = MagicMock()
+        mock_proc.wait = AsyncMock()
+
+        with (
+            patch(
+                "dev_lib.claude_cli.asyncio.create_subprocess_exec", return_value=mock_proc
+            ) as mock_exec,
+            patch("dev_lib.claude_cli.asyncio.sleep", new_callable=AsyncMock),
+        ):
+            cli = ClaudeCLI(timeout=10)
+            with pytest.raises(ClaudeCLITimeoutError):
+                await cli.arun_json("test")
+
+        # Only one exec call — no retry on timeout
+        assert mock_exec.call_count == 1
 
 
 class TestGlobalRateLimiting:

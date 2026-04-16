@@ -367,7 +367,7 @@ else:
     except TimeoutError:
         print("Server failed to start")
     except FileNotFoundError:
-        print("vLLM not installed. Run: pip install scicode-lint[vllm-server]")
+        print("Container runtime missing. Run: sudo apt install podman nvidia-container-toolkit")
     finally:
         if proc:
             stop_server(proc)
@@ -377,9 +377,10 @@ else:
 
 ## Requirements
 
-**vLLM must be installed:**
+**Container runtime must be installed** (vLLM runs in a container):
 ```bash
-pip install scicode-lint[vllm-server]
+sudo apt install podman nvidia-container-toolkit
+# (docker works too)
 ```
 
 **System requirements:**
@@ -393,9 +394,9 @@ pip install scicode-lint[vllm-server]
 
 ### Server fails to start
 
-**Error:** `FileNotFoundError: vllm command not found`
+**Error:** `neither podman nor docker found on PATH`
 
-**Solution:** Install vLLM: `pip install scicode-lint[vllm-server]`
+**Solution:** Install a container runtime: `sudo apt install podman nvidia-container-toolkit`
 
 ---
 

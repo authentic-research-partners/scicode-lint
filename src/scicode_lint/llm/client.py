@@ -1,58 +1,49 @@
 """LLM client for vLLM with structured output.
 
-CRITICAL: Thinking Models Require `guided_json`, NOT `response_format`
-======================================================================
+Structured Output with Qwen3
+=============================
 
-Qwen3 (and other thinking models) output reasoning in `<think>...</think>` blocks
-BEFORE producing the final JSON answer. This thinking phase is essential for accuracy.
+Qwen3 outputs reasoning in `<think>...</think>` blocks before the JSON answer.
+This thinking phase is essential for accuracy.
 
-The Problem
------------
-OpenAI-compatible `response_format: json_schema` forces immediate JSON output,
-SKIPPING the thinking phase entirely:
+Approach
+--------
+We use the OpenAI-standard `response_format: json_schema` for constrained decoding,
+combined with vLLM's Qwen3 reasoning parser (`--reasoning-parser qwen3`).
 
-    # guided_json (correct) - model thinks first, then produces JSON
-    <think>
-    Let me analyze this code. The model.eval() is called on line 42,
-    then training happens on lines 54-60 without model.train()...
-    </think>
-    {"detected": true, "reasoning": "Training after eval without train mode"}
+The reasoning parser separates thinking from content server-side:
+- `message.content` → clean JSON (guaranteed valid by XGrammar/Outlines)
+- `message.reasoning` → thinking content (model's chain-of-thought)
 
-    # response_format json_schema (WRONG) - no thinking, immediate JSON
-    {"detected": true, "reasoning": "Training after eval"}
+No client-side `<think>` tag stripping needed.
 
-Impact: Using `json_schema` instead of `guided_json` drops accuracy from ~99% to ~78%.
+Note: `--reasoning-parser qwen3` is Qwen3-specific. Other thinking models require
+their own parser (e.g., `deepseek` for DeepSeek-R1). Non-thinking models don't
+need any parser. (vLLM v0.18+ removed the separate `--enable-reasoning` flag;
+setting `--reasoning-parser` alone now enables reasoning implicitly.)
 
-Root Cause
-----------
-- `guided_json` (in extra_body): Uses vLLM's XGrammar/Outlines backend to constrain
-  output AFTER the model completes its thinking phase
-- `response_format: json_schema`: Activates OpenAI compatibility mode that expects
-  immediate JSON output, suppressing the `<think>` blocks
+Related vLLM features:
+- `thinking.budget=N` → hard cap on thinking tokens (abruptly stops)
+- `thinking.effort=F` → soft guide for thinking depth (0.0-1.0)
+- Use both together: effort guides depth, budget prevents runaway
+- `chat_template_kwargs.enable_thinking=False` → disables thinking entirely
 
-This is specific to models with VISIBLE thinking tokens (like Qwen3's <think> blocks).
-OpenAI's o-series reasoning models use INTERNAL reasoning tokens (hidden from output),
-so json_schema works fine for them. But Qwen3's visible thinking gets suppressed.
-
-vLLM's guided decoding (XGrammar/Outlines) is enabled by default - no special config needed.
-
-Correct Usage
--------------
-    # CORRECT - preserves thinking
+Usage
+-----
     completion = client.chat.completions.create(
         model=model,
         messages=messages,
-        extra_body={"guided_json": json_schema},
+        response_format={"type": "json_schema", "json_schema": {
+            "name": "MySchema",
+            "schema": json_schema,
+            "strict": True,
+        }},
     )
-
-    # WRONG - skips thinking phase, ~20% accuracy drop
-    completion = client.chat.completions.create(
-        model=model,
-        messages=messages,
-        response_format={"type": "json_schema", "json_schema": {...}},
-    )
+    content = completion.choices[0].message.content      # clean JSON
+    thinking = completion.choices[0].message.reasoning    # thinking (if any)
 """
 
+import asyncio
 import json
 import time
 import warnings
@@ -64,6 +55,8 @@ from loguru import logger
 from pydantic import BaseModel, ValidationError
 
 from scicode_lint.config import LLMConfig
+from scicode_lint.exceptions import LLMConnectionError, SciCodeLintError
+from scicode_lint.llm.models import vllm_schema
 
 # Suppress Pydantic serialization warning for OpenAI SDK's ParsedChatCompletionMessage.parsed field
 # Root cause: When using OpenAI SDK's structured outputs with LangChain, the parsed field
@@ -76,10 +69,15 @@ warnings.filterwarnings(
     "ignore", message="Pydantic serializer warnings:", category=UserWarning, module="pydantic.main"
 )
 
+# Transient retry budget: 3 total attempts (initial + 2 retries).
+# Covers content=None (thinking exhausted max_tokens) and rare network glitches.
+# See CONSTRAINED_DECODING.md § "The three failure modes" for why content=None happens.
+_TRANSIENT_RETRIES = 2
+
 T = TypeVar("T", bound=BaseModel)
 
 
-class MissingLocationError(ValueError):
+class MissingLocationError(SciCodeLintError):
     """Raised when LLM returns detected='yes' but no location.
 
     This is a specific validation error that indicates the model understood
@@ -123,7 +121,11 @@ class LLMClient(ABC):
 
     @abstractmethod
     async def async_complete_structured(
-        self, system_prompt: str, user_prompt: str, schema: type[T]
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        schema: type[T],
+        **overrides: Any,
     ) -> T:
         """
         Get structured completion from LLM asynchronously.
@@ -132,6 +134,11 @@ class LLMClient(ABC):
             system_prompt: System message
             user_prompt: User message
             schema: Pydantic model class for response structure
+            **overrides: Per-call overrides merged into extra_body.
+                Supported keys:
+                - thinking_budget: int — hard cap on thinking tokens
+                - thinking_effort: float — soft guide (0.0-1.0)
+                - temperature: float — override sampling temperature
 
         Returns:
             Validated Pydantic model instance
@@ -163,9 +170,17 @@ class VLLMClient(LLMClient):
 
         Note: Only works with vLLM servers (local or remote).
         Uses OpenAI-compatible API format but is NOT for commercial APIs.
+
+        The configured base_url is probed lazily on the first structured
+        call (not at construction time) so that constructing a client does
+        not require a live server — useful for unit tests and deferred
+        setup. The probe fast-fails with ``LLMConnectionError`` if the URL
+        is unreachable, avoiding the multi-minute openai retry loop on
+        a refused connection.
         """
         self.config = config
         self._max_model_len: int = 0
+        self._probed: bool = False
 
         # Use OpenAI SDK for vLLM's OpenAI-compatible API
         try:
@@ -184,41 +199,12 @@ class VLLMClient(LLMClient):
 
         self._max_model_len = self.config.max_model_len
 
-    @staticmethod
-    def _extract_thinking(text: str) -> tuple[str, str | None]:
-        """
-        Extract and remove <think>...</think> tags from response.
-
-        Qwen3 models in thinking mode output reasoning in <think> tags before the JSON.
-        Handles both closed tags and truncated/unclosed tags (when output is cut off).
-
-        Returns:
-            Tuple of (cleaned_text, thinking_content).
-            thinking_content is None if no thinking tags were found.
-        """
-        import re
-
-        thinking_content = None
-
-        # Try to find closed thinking tags first
-        thinking_match = re.search(r"<think>(.*?)</think>", text, flags=re.DOTALL)
-        if thinking_match:
-            thinking_content = thinking_match.group(1).strip()
-            # Remove the closed thinking block
-            cleaned_text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
-        elif text.strip().startswith("<think>"):
-            # Handle unclosed/truncated thinking tags (output was cut off)
-            # Everything after <think> is thinking content, no JSON available
-            thinking_content = text[7:].strip()  # Skip "<think>"
-            cleaned_text = ""  # No JSON content available
-            logger.warning(
-                f"Truncated thinking detected ({len(thinking_content)} chars). "
-                "Model may have exhausted output tokens on reasoning."
-            )
-        else:
-            cleaned_text = text
-
-        return cleaned_text.strip(), thinking_content
+    def _ensure_reachable(self) -> None:
+        """Probe base_url once on first use; raise LLMConnectionError on failure."""
+        if self._probed:
+            return
+        _probe_base_url(self.config.base_url)
+        self._probed = True
 
     @staticmethod
     def _strip_markdown_fences(text: str) -> str:
@@ -241,17 +227,20 @@ class VLLMClient(LLMClient):
         return text.strip()
 
     @staticmethod
-    def _parse_and_validate(response_text: str, schema: type[T]) -> T:
+    def _parse_and_validate(
+        response_text: str, schema: type[T], thinking_content: str | None = None
+    ) -> T:
         """
         Parse JSON response and validate against Pydantic schema.
 
-        Strips thinking tags (Qwen3) and markdown code fences that models often add.
-        If the schema has a 'thinking' field, the extracted thinking content will be
-        stored there.
+        With --reasoning-parser set, vLLM separates thinking into a 'reasoning'
+        field server-side. The content field contains clean JSON. Markdown
+        fence stripping is kept as a safety net.
 
         Args:
-            response_text: Raw JSON string from LLM (may have thinking tags or markdown fences)
+            response_text: JSON string from LLM (already separated from thinking by vLLM)
             schema: Pydantic model class to validate against
+            thinking_content: Thinking content from vLLM's reasoning field (if available)
 
         Returns:
             Validated Pydantic model instance
@@ -261,12 +250,10 @@ class VLLMClient(LLMClient):
             MissingLocationError: If detected='yes'/'context-dependent' but location is None
             ValidationError: If other schema validation fails
         """
-        # Extract thinking content (Qwen3) and strip markdown code fences
-        cleaned_text, thinking_content = VLLMClient._extract_thinking(response_text)
-        cleaned_text = VLLMClient._strip_markdown_fences(cleaned_text)
+        cleaned_text = VLLMClient._strip_markdown_fences(response_text)
 
         if thinking_content:
-            logger.debug(f"Extracted thinking content ({len(thinking_content)} chars)")
+            logger.debug(f"Received thinking content ({len(thinking_content)} chars)")
 
         try:
             response_data = json.loads(cleaned_text)
@@ -307,6 +294,7 @@ class VLLMClient(LLMClient):
         max_attempts: int,
         start_time: float,
         label: str,
+        thinking_content: str | None = None,
     ) -> tuple[T | None, str | None]:
         """Handle LLM response: parse, validate, and manage retry logic.
 
@@ -317,6 +305,7 @@ class VLLMClient(LLMClient):
             max_attempts: Maximum number of attempts
             start_time: Time when the call started (for elapsed logging)
             label: Log label ("vLLM call" or "Async vLLM call")
+            thinking_content: Thinking content from vLLM's reasoning field
 
         Returns:
             Tuple of (result, correction_prompt). If result is not None, the call
@@ -326,7 +315,7 @@ class VLLMClient(LLMClient):
             ValueError: If JSON parsing or schema validation fails (non-retryable)
         """
         try:
-            result = self._parse_and_validate(response_text, schema)
+            result = self._parse_and_validate(response_text, schema, thinking_content)
             elapsed = time.time() - start_time
             logger.info(f"{label} completed in {elapsed:.2f}s for {schema.__name__}")
             return result, None
@@ -372,70 +361,190 @@ class VLLMClient(LLMClient):
         system_prompt: str,
         user_prompt: str,
         json_schema: dict[str, Any],
+        schema_name: str,
         max_tokens: int,
+        **overrides: Any,
     ) -> dict[str, Any]:
-        """Build parameters for the OpenAI API call."""
-        return {
+        """Build parameters for the OpenAI API call.
+
+        Args:
+            **overrides: Per-call overrides. Supported keys:
+                - thinking_budget: int — hard cap on thinking tokens
+                - thinking_effort: float — soft guide for thinking depth (0.0-1.0)
+                - temperature: float — override sampling temperature
+        """
+        thinking_budget = overrides.pop("thinking_budget", self.config.thinking_budget)
+        thinking_effort = overrides.pop("thinking_effort", self.config.thinking_effort)
+        temperature = overrides.pop("temperature", self.config.temperature)
+
+        extra_body: dict[str, Any] = {"top_k": self.config.top_k}
+        if thinking_budget > 0:
+            # Active thinking: budget as hard cap
+            extra_body["thinking"] = {"budget": thinking_budget}
+        else:
+            # Thinking disabled: explicitly tell model to skip <think> blocks
+            extra_body["chat_template_kwargs"] = {"enable_thinking": False}
+
+        params: dict[str, Any] = {
             "model": self.config.model_served_name,
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            "extra_body": {"guided_json": json_schema, "top_k": self.config.top_k},
-            "temperature": self.config.temperature,
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": schema_name,
+                    "schema": json_schema,
+                    "strict": True,
+                },
+            },
+            "extra_body": extra_body,
+            "temperature": temperature,
             "top_p": self.config.top_p,
             "max_tokens": max_tokens,
         }
 
+        # reasoning_effort as top-level param (OpenAI standard, more portable)
+        if thinking_budget > 0 and thinking_effort is not None:
+            params["reasoning_effort"] = thinking_effort
+
+        return params
+
     async def async_complete_structured(
-        self, system_prompt: str, user_prompt: str, schema: type[T]
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        schema: type[T],
+        **overrides: Any,
     ) -> T:
         """
         Get structured completion from vLLM asynchronously using OpenAI SDK.
 
-        Uses vLLM's guided_json for schema-constrained output that preserves thinking.
-        Requires vLLM with guided decoding support (XGrammar/Outlines backend).
+        Uses response_format json_schema for schema-constrained output.
+        vLLM's reasoning parser separates thinking from JSON server-side.
 
-        If the model returns detected='yes' but missing location, retries once with a
-        correction prompt to enforce location extraction.
+        Two retry layers:
+        1. **Transient retry** — retries on content=None (thinking exhausted
+           max_tokens before JSON started) or rare JSONDecodeError (network
+           glitch). Up to ``_TRANSIENT_RETRIES`` retries with exponential backoff.
+        2. **Missing-location retry** — retries once with a correction prompt
+           when model returns detected='yes' but no location.
+
+        Args:
+            **overrides: Per-call overrides (thinking_budget, temperature, etc.)
 
         Concurrent requests with shared prefixes benefit from automatic prefix caching.
         Uses OpenAI AsyncClient for true async concurrency.
+
+        Raises:
+            LLMConnectionError: If the configured vLLM server is unreachable
+                (probed on first call, cached thereafter).
         """
+        self._ensure_reachable()
         start_time = time.time()
         logger.debug(f"Starting async vLLM call for {schema.__name__}")
 
-        json_schema = schema.model_json_schema()
+        json_schema = vllm_schema(schema)
         max_tokens = self.config.max_completion_tokens or 2048
         correction_prompt: str | None = None
-        max_attempts = 2
+        max_location_attempts = 2
 
-        for attempt in range(max_attempts):
+        for location_attempt in range(max_location_attempts):
             current_prompt = user_prompt
             if correction_prompt:
                 current_prompt = user_prompt + correction_prompt
-                logger.info(f"Retrying with correction prompt (attempt {attempt + 1})")
+                logger.info(f"Retrying with correction prompt (attempt {location_attempt + 1})")
 
-            # IMPORTANT: Use guided_json in extra_body, NOT response_format with json_schema.
-            # Qwen3 outputs <think>...</think> blocks BEFORE the JSON.
-            # Using json_schema drops accuracy from ~99% to ~78% because it skips thinking.
-            try:
-                completion = await self._async_client.chat.completions.create(
-                    **self._build_api_params(system_prompt, current_prompt, json_schema, max_tokens)
+            # Transient retry loop: empty content or invalid JSON.
+            # Both are "try again" situations — empty content means thinking
+            # exhausted max_tokens, invalid JSON means rare network glitch.
+            last_transient_error: Exception | None = None
+            for transient_attempt in range(_TRANSIENT_RETRIES + 1):
+                try:
+                    completion = await self._async_client.chat.completions.create(
+                        **self._build_api_params(
+                            system_prompt,
+                            current_prompt,
+                            json_schema,
+                            schema.__name__,
+                            max_tokens,
+                            **overrides,
+                        )
+                    )
+                except Exception as e:
+                    # Map connection-class errors (vLLM died mid-call, network
+                    # dropped) to the typed hierarchy so CLI exit codes and
+                    # `except SciCodeLintError` consumers stay consistent.
+                    # Schema/validation/structured-output failures remain
+                    # RuntimeError — they're not domain errors.
+                    from openai import APIConnectionError, APITimeoutError
+
+                    if isinstance(e, (APIConnectionError, APITimeoutError)):
+                        raise LLMConnectionError(
+                            f"vLLM server at {self.config.base_url} became "
+                            f"unreachable mid-request: {type(e).__name__}: {e}\n\n"
+                            "Check server health: scicode-lint vllm-server status"
+                        ) from e
+                    raise RuntimeError(
+                        f"vLLM structured output failed: {e}\n"
+                        "response_format json_schema with XGrammar/Outlines is required."
+                    ) from e
+
+                message = completion.choices[0].message
+                response_text = message.content
+                thinking_content = getattr(message, "reasoning", None) or getattr(
+                    message, "reasoning_content", None
                 )
-            except Exception as e:
-                raise RuntimeError(
-                    f"vLLM structured output failed: {e}\n"
-                    "guided_json with XGrammar/Outlines is required for thinking models."
-                ) from e
 
-            response_text = completion.choices[0].message.content
-            if response_text is None:
-                raise ValueError("LLM returned empty response")
+                # Empty content: thinking consumed entire max_tokens budget
+                if response_text is None:
+                    last_transient_error = ValueError(
+                        f"vLLM returned empty content for {schema.__name__}. "
+                        f"Thinking likely exhausted max_completion_tokens ({max_tokens})."
+                    )
+                    if transient_attempt < _TRANSIENT_RETRIES:
+                        delay = 0.5 * (transient_attempt + 1)
+                        logger.warning(
+                            f"vLLM empty content for {schema.__name__} "
+                            f"(attempt {transient_attempt + 1}/{_TRANSIENT_RETRIES + 1}), "
+                            f"retrying in {delay}s"
+                        )
+                        await asyncio.sleep(delay)
+                        continue
+                    raise last_transient_error
 
-            result, correction_prompt = self._handle_response(
-                response_text, schema, attempt, max_attempts, start_time, "Async vLLM call"
-            )
+                # Try to parse — JSONDecodeError is transient (rare network glitch)
+                try:
+                    result, correction_prompt = self._handle_response(
+                        response_text,
+                        schema,
+                        location_attempt,
+                        max_location_attempts,
+                        start_time,
+                        "Async vLLM call",
+                        thinking_content,
+                    )
+                    break  # Parsed successfully (result may be None for correction retry)
+                except ValueError as e:
+                    if "JSON parse" not in str(e):
+                        raise  # Non-JSON errors (schema validation) are not transient
+                    last_transient_error = e
+                    if transient_attempt < _TRANSIENT_RETRIES:
+                        delay = 0.5 * (transient_attempt + 1)
+                        logger.warning(
+                            f"vLLM JSON parse error for {schema.__name__} "
+                            f"(attempt {transient_attempt + 1}/{_TRANSIENT_RETRIES + 1}), "
+                            f"retrying in {delay}s"
+                        )
+                        await asyncio.sleep(delay)
+                        continue
+                    raise
+            else:
+                # Loop exhausted without break — all transient retries failed
+                assert last_transient_error is not None
+                raise last_transient_error
+
             if result is not None:
                 return result
 
@@ -455,6 +564,40 @@ class VLLMClient(LLMClient):
         return self._max_model_len
 
 
+def _probe_base_url(base_url: str, timeout: float = 3.0) -> None:
+    """Verify a base URL responds at ``/v1/models``; raise fast on failure.
+
+    Called from ``VLLMClient.__init__`` so callers get an immediate
+    ``LLMConnectionError`` instead of a multi-minute openai retry loop.
+
+    Args:
+        base_url: Root URL of the vLLM server (no trailing ``/v1``).
+        timeout: Per-probe timeout in seconds.
+
+    Raises:
+        LLMConnectionError: If the probe fails for any reason.
+    """
+    probe_url = f"{base_url.rstrip('/')}/v1/models"
+    try:
+        with httpx.Client(timeout=timeout) as client:
+            response = client.get(probe_url)
+    except (httpx.ConnectError, httpx.TimeoutException, httpx.HTTPError) as e:
+        raise LLMConnectionError(
+            f"vLLM server at {base_url} is unreachable: {type(e).__name__}: {e}\n\n"
+            "Start a local server with:\n"
+            "  scicode-lint vllm-server start\n\n"
+            "Or pass --vllm-url pointing at a running server."
+        ) from e
+
+    if response.status_code != 200:
+        raise LLMConnectionError(
+            f"vLLM server at {base_url} returned HTTP {response.status_code} "
+            f"from {probe_url}. The server is reachable but not serving the "
+            "OpenAI-compatible API. Check that vLLM is running, not a "
+            "different service on the same port."
+        )
+
+
 def detect_vllm() -> tuple[str, str | None]:
     """
     Auto-detect vLLM server and model.
@@ -466,7 +609,7 @@ def detect_vllm() -> tuple[str, str | None]:
         model_name is None if it couldn't be detected
 
     Raises:
-        RuntimeError: If no vLLM server is available
+        LLMConnectionError: If no vLLM server is available
     """
     # Try vLLM on common ports
     vllm_urls = ["http://localhost:5001", "http://localhost:8000"]
@@ -485,12 +628,11 @@ def detect_vllm() -> tuple[str, str | None]:
         except (httpx.ConnectError, httpx.TimeoutException):
             continue
 
-    raise RuntimeError(
+    raise LLMConnectionError(
         "No vLLM server detected. Please start vLLM:\n\n"
-        "  1. Install: pip install scicode-lint[vllm-server]\n"
-        "  2. Start: vllm serve RedHatAI/Qwen3-8B-FP8-dynamic\n"
-        "  3. vLLM will run on http://localhost:5001 or http://localhost:8000\n\n"
-        "Note: vLLM supports CPU mode with --device cpu"
+        "  scicode-lint vllm-server start\n\n"
+        "Requires: podman or docker + nvidia-container-toolkit\n"
+        "See INSTALLATION.md for setup instructions."
     )
 
 

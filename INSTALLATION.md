@@ -15,7 +15,7 @@
 
 **Option A: Using remote vLLM server** (university/institutional)
 ```bash
-pip install scicode-lint
+uv tool install scicode-lint --python 3.13
 scicode-lint lint path/to/code.py --vllm-url https://vllm.your-institution.edu
 
 # Or configure once in ~/.config/scicode-lint/config.toml:
@@ -25,64 +25,67 @@ scicode-lint lint path/to/code.py --vllm-url https://vllm.your-institution.edu
 
 **Option B: Running vLLM locally** (requires 16GB+ GPU)
 ```bash
-# 1. Install with vLLM server
-pip install scicode-lint[vllm-server]
+# 1. Install scicode-lint + container runtime
+uv tool install scicode-lint --python 3.13
+# Install podman (or docker) + nvidia-container-toolkit:
+#   sudo apt install podman nvidia-container-toolkit
+#   sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml
 
-# 2. Start vLLM server (downloads model on first run - see "Model Storage" below)
-vllm serve RedHatAI/Qwen3-8B-FP8-dynamic \
-    --trust-remote-code --gpu-memory-utilization 0.85 \
-    --max-model-len 20000
+# 2. Start vLLM container (downloads model on first run - see "Model Storage" below)
+scicode-lint vllm-server start
 
-# 3. Run the linter (in another terminal)
+# 3. Run the linter
 scicode-lint lint path/to/code.py
 ```
 
 ## Installation: Isolated Environment (Recommended)
 
-**⚠️ Important:** The `[vllm-server]` extra has heavy dependencies. Install in an isolated environment to avoid conflicts. If using a remote vLLM server, `pip install scicode-lint` (without extras) has minimal dependencies.
-
 **Safety Note:** scicode-lint only *reads* your code files as text - it never executes or imports your code.
 
-### Option 1: pipx (Recommended for CLI Usage)
+### Option 1: uv tool install (Recommended for CLI Usage)
+
+Requires [uv](https://docs.astral.sh/uv/getting-started/installation/). uv downloads Python 3.13 automatically (without affecting any system Python you already have) and installs scicode-lint as a globally available command in an isolated environment.
+
+```bash
+uv tool install scicode-lint --python 3.13
+```
+
+### Option 2: pipx (Alternative for CLI Usage)
 
 ```bash
 python -m pip install --user pipx
 python -m pipx ensurepath
-pipx install scicode-lint                  # Remote vLLM server
-pipx install scicode-lint[vllm-server]     # Local vLLM server
+pipx install scicode-lint
 ```
 
-### Option 2: Dedicated Environment (For Python API or Development)
+### Option 3: Plain pip (Advanced)
+
+Works fine if you already have Python 3.13 and manage your own environment. May cause dependency conflicts with other projects — prefer the isolated options above.
+
+```bash
+pip install scicode-lint
+```
+
+### Option 4: Dedicated Environment (For Python API or Development)
+
+**Using uv:**
+```bash
+uv venv --python 3.13 ~/.scicode-venv
+source ~/.scicode-venv/bin/activate
+uv pip install scicode-lint
+```
 
 **Using conda:**
 ```bash
 conda create -n scicode python=3.13
 conda activate scicode
-pip install scicode-lint                   # Remote vLLM server
-# or
-pip install scicode-lint[vllm-server]      # Local vLLM server
-
-# For development:
-pip install -e ".[all]"
+pip install scicode-lint
 ```
 
-**Using venv:**
+**Note:** Activate the environment in each new terminal session before using scicode-lint:
 ```bash
-python -m venv ~/.scicode-venv
-source ~/.scicode-venv/bin/activate
-pip install scicode-lint                   # Remote vLLM server
-# or
-pip install scicode-lint[vllm-server]      # Local vLLM server
+source ~/.scicode-venv/bin/activate    # or: conda activate scicode
 ```
-
-**Note:** Activate the environment in each new terminal session before using scicode-lint or Claude Code:
-```bash
-conda activate scicode   # or: source ~/.scicode-venv/bin/activate
-```
-
-### Option 3: Install in Project Environment (Not Recommended)
-
-May cause dependency conflicts with your project.
 
 ---
 
@@ -90,129 +93,47 @@ May cause dependency conflicts with your project.
 
 ### Local vLLM Server (Recommended)
 
-Install the vLLM server locally to host models on your GPU:
+vLLM runs in a container (podman or docker) with GPU passthrough:
 
 ```bash
-# For GPU (CUDA)
-pip install scicode-lint[vllm-server]
+# 1. Install scicode-lint
+uv tool install scicode-lint --python 3.13
 
-# For CPU-only systems
-pip install vllm-cpu scicode-lint
-```
+# 2. Install container runtime + GPU support
+sudo apt install podman nvidia-container-toolkit
+sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml
 
-**Pros:**
-- **No external dependencies** - just pip install
-- Best performance on GPU (prefix caching, batching)
-- Full control over model and settings
-- Works offline
-- Supports both GPU and CPU
+# Verify GPU passthrough works:
+podman run --rm --device nvidia.com/gpu=all ubuntu nvidia-smi
 
-**Cons:**
-- GPU: Requires CUDA GPU with 16GB+ VRAM and native FP8 support
-- CPU-only: Not supported
-- ~2-3GB download for vLLM + ~13GB for model
-
-**Starting vLLM:**
-```bash
-vllm serve \
-    --host 0.0.0.0 \
-    --port 5001 \
-    --model RedHatAI/Qwen3-8B-FP8-dynamic \
-    --trust-remote-code \
-    --gpu-memory-utilization 0.85 \
-    --max-model-len 20000  # 20K context (16K input + 4K response)
-```
-
-Or use the CLI command (auto-verifies hardware):
-```bash
+# 3. Start vLLM container
 scicode-lint vllm-server start
 ```
 
-The script will exit with an error if your hardware doesn't meet requirements (16GB+ VRAM, compute cap >= 8.9).
+**Pros:**
+- No `pip install vllm` (~2GB) — vLLM runs inside the container
+- Pinned vLLM version (v0.18.0) — no version confusion
+- Auto-restarts on failure (`--restart unless-stopped`)
+- Best performance on GPU (prefix caching, batching)
+- Full control over model and settings
+- Works offline after first model download
 
-**Starting vLLM (CPU):**
+**Cons:**
+- Requires CUDA GPU with 16GB+ VRAM and native FP8 support
+- Requires podman or docker + nvidia-container-toolkit
+- ~13GB model download on first run
+
+**Container management:**
 ```bash
-vllm serve \
-    --model RedHatAI/Qwen3-8B-FP8-dynamic \
-    --trust-remote-code \
-    --max-model-len 20000 \
-    --device cpu
+scicode-lint vllm-server start     # Start container
+scicode-lint vllm-server stop      # Stop container
+scicode-lint vllm-server status    # Show container + GPU status
+scicode-lint vllm-server restart   # Restart (stop + remove + start)
+scicode-lint vllm-server logs      # Show vLLM logs
+scicode-lint vllm-server logs -f   # Follow logs
+scicode-lint vllm-server rm        # Remove container
 ```
 
-**Note:** CPU inference is 10-50x slower than GPU. vLLM supports CPU mode with `--device cpu` flag.
-
-## Google Colab
-
-Colab is not supported. Use cloud providers with L4/A10 GPUs instead.
-
-**Requirements:**
-- 16GB+ VRAM
-- Native FP8 support (compute capability >= 8.9)
-
-**Setup in Colab:**
-
-```python
-# 1. Install scicode-lint with vLLM
-!pip install scicode-lint[vllm-server]
-
-# 2. Start vLLM server in background
-# NOTE: First run downloads ~13GB model to /root/.cache/huggingface/ (takes 2-5 min)
-!nohup vllm serve \
-    --model RedHatAI/Qwen3-8B-FP8-dynamic \
-    --trust-remote-code \
-    --max-model-len 20000 \
-    --gpu-memory-utilization 0.85 \
-    --host 0.0.0.0 \
-    --port 5001 > /tmp/vllm.log 2>&1 &
-
-# 3. Wait for server to start (30-60 seconds)
-import time
-import httpx
-for i in range(30):
-    try:
-        response = httpx.get("http://localhost:5001/health")
-        if response.status_code == 200:
-            print("✓ vLLM server ready!")
-            break
-    except:
-        pass
-    time.sleep(2)
-    print(f"Waiting for server... ({i*2}s)")
-
-# 4. Check your code
-!scicode-lint lint your_file.py
-
-# Or use Python API
-from pathlib import Path
-from scicode_lint import SciCodeLinter
-
-linter = SciCodeLinter()
-result = linter.check_file(Path("your_file.py"))
-
-for finding in result.findings:
-    print(f"{finding.severity} | {finding.id}")
-    print(f"  {finding.explanation}\n")
-```
-
-**Best for:**
-- ✅ Trying scicode-lint without local GPU
-- ✅ Demos, tutorials, workshops
-- ✅ Quick one-off file checks
-- ✅ Learning how the tool works
-
-**Not suitable for:**
-- ❌ Production use (session timeouts)
-- ❌ CI/CD pipelines (unreliable)
-- ❌ Batch processing many files (runtime limits)
-- ❌ Long-running analysis
-
-**Tips:**
-- Upload your Python files to Colab using the file browser
-- Server needs restart after session timeout
-- First run downloads model to `/root/.cache/huggingface/` (~13GB, takes 2-5 minutes)
-- Subsequent runs use cached model (starts in seconds)
-
----
 
 ## HPC Cluster Usage
 
@@ -253,7 +174,7 @@ Connect to a remote vLLM server (institutional or self-hosted):
 **CLI usage:**
 ```bash
 # Install scicode-lint only (no local server needed)
-pip install scicode-lint
+uv tool install scicode-lint --python 3.13
 
 # Use remote vLLM server
 scicode-lint lint path/to/code.py --vllm-url https://your-vllm-server.com
@@ -285,21 +206,21 @@ with VLLMServer(base_url="http://gpu-cluster.your-institution.edu:5001"):
 
 **Note:** scicode-lint only supports vLLM servers. It does NOT work with commercial APIs (OpenAI, Anthropic, etc.) to avoid accidental API costs.
 
-## Development Installation
+## Development install
 
 For development with testing and linting tools:
 
 ```bash
 # Clone the repository
-git clone https://github.com/ssamsonau/scicode-lint
+git clone https://github.com/authentic-research-partners/scicode-lint
 cd scicode-lint
 
-# Create isolated environment (recommended)
-conda create -n scicode python=3.13
-conda activate scicode
+# Create isolated environment with uv (recommended — fast, manages Python itself)
+uv venv --python 3.13 .venv
+source .venv/bin/activate
 
 # Install all dependencies (dev, vllm, eval, dashboard, etc.)
-pip install -e ".[all]"
+uv pip install -e ".[all]"
 
 # Run tests
 pytest
@@ -308,6 +229,56 @@ pytest
 ruff check . && ruff format .
 mypy .
 ```
+
+**Alternative with conda:**
+```bash
+conda create -n scicode python=3.13
+conda activate scicode
+pip install -e ".[all]"
+```
+
+### Reproducible Environment (`requirements-pinned.txt`)
+
+`pyproject.toml` declares **minimum** versions (lower bounds), so a plain `pip install` may resolve newer packages as upstream releases ship. For reproducing the exact versions the maintainer develops and tests against, use [`requirements-pinned.txt`](./requirements-pinned.txt).
+
+**What's in it:** top-level packages declared in `pyproject.toml` (runtime + all optional extras) pinned to `==` versions. Transitive dependencies are **not** pinned — pip resolves them within each top-level package's own constraints. This is a deliberate middle ground: it locks the packages scicode-lint code actually imports and tests against, without over-constraining the dep tree.
+
+**When to use which:**
+- Library users: `pip install scicode-lint` (resolves against minimums — fine for most use)
+- Reproducing benchmarks / debugging a version-drift issue / CI: use the pinned file
+
+**Install from the pinned file:**
+
+> **Note:** Both recipes below create a new virtualenv directory named `.venv` **in your current working directory**. Run them from inside your clone of the scicode-lint repo (so `.venv/` sits next to `pyproject.toml`). `.venv` is already gitignored. If you prefer a different location (e.g. `~/.virtualenvs/scicode-lint`), substitute that path in both the create step and the `source …/bin/activate` step. The resulting venv is independent of any conda env you may already have — it doesn't replace or modify it — but to avoid confusion about which `python` / `pip` is on `PATH`, start from a fresh shell (or `conda deactivate`) before running these commands.
+
+```bash
+# With uv (fast, isolated, manages Python itself)
+uv venv --python 3.13 .venv
+source .venv/bin/activate
+uv pip install -r requirements-pinned.txt
+uv pip install -e . --no-deps    # install scicode-lint source, deps already pinned
+
+# Or with plain pip
+python3.13 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements-pinned.txt
+pip install -e . --no-deps
+```
+
+Activate the venv in each new terminal with `source .venv/bin/activate` (or configure [direnv](https://direnv.net/) for automatic activation).
+
+**Regenerate the pinned file** — run from the environment you actively develop and test in (conda env, venv, whatever), after bumping deps in `pyproject.toml` or upgrading a dependency. The script reads from whatever `python`/`pip` is currently on `PATH`, so *activate first*:
+```bash
+# Example: conda env named `scicode`
+conda activate scicode
+python scripts/regenerate_pinned_requirements.py
+
+# Or a venv
+source .venv/bin/activate
+python scripts/regenerate_pinned_requirements.py
+```
+
+The script calls `pip freeze` in the current env, filters to the top-level names declared in `pyproject.toml`, and writes `requirements-pinned.txt`. It exits non-zero if any declared dep is missing from the env — a sanity check that you're running from a fully-installed dev environment. Commit the regenerated file alongside any `pyproject.toml` version bumps in the same PR.
 
 ## System Requirements
 
@@ -343,25 +314,25 @@ When you first start vLLM with a model, it will automatically download the model
 
 **First run behavior:**
 ```bash
-# First time running vLLM - downloads model (2-5 minutes depending on connection)
-vllm serve RedHatAI/Qwen3-8B-FP8-dynamic --trust-remote-code
+# First start — downloads model (2-5 minutes depending on connection)
+scicode-lint vllm-server start
 
-# Output will show:
+# Container logs (scicode-lint vllm-server logs) will show:
 # Downloading model from HuggingFace...
 # ━━━━━━━━━━━━━━━━━━━━━ 100% 13.3GB/13.3GB
 
-# Subsequent runs - uses cached model (starts in seconds)
-vllm serve RedHatAI/Qwen3-8B-FP8-dynamic --trust-remote-code
+# Subsequent starts — uses cached model (starts in seconds)
+scicode-lint vllm-server start
 ```
 
 **Customizing cache location:**
 
-Set the `HF_HOME` environment variable to change where models are stored:
+Set `HF_HOME` before starting the container. The container mounts this volume so
+downloads persist across restarts:
 
 ```bash
-# Store models in custom location (e.g., larger disk partition)
 export HF_HOME=/mnt/data/huggingface
-vllm serve RedHatAI/Qwen3-8B-FP8-dynamic
+scicode-lint vllm-server restart
 ```
 
 **Managing cached models:**
@@ -370,20 +341,19 @@ Model weights are stored in `~/.cache/huggingface/hub/`. To remove a specific mo
 
 ## Troubleshooting
 
-### vLLM installation fails
+### Container fails to start
 
-Try installing with the specific version:
-```bash
-pip install vllm==0.16.0
-```
+Check logs: `scicode-lint vllm-server logs`. Common causes:
+- `nvidia-container-toolkit` not installed or CDI not generated — rerun `sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml`
+- GPU not visible to container — test with `podman run --rm --device nvidia.com/gpu=all ubuntu nvidia-smi`
 
 ### GPU not detected
 
-Verify CUDA and PyTorch are properly installed and detecting your GPU.
+Verify `nvidia-smi` works on the host, then verify GPU passthrough into the container (see command above).
 
 ### Model download is slow
 
-Model downloads to `~/.cache/huggingface/` on first use (~13GB). You can pre-download:
+Model downloads to `~/.cache/huggingface/` on first use (~13GB). You can pre-download outside the container:
 
 ```bash
 # Pre-download FP8 model
@@ -393,14 +363,12 @@ python3 -c "from huggingface_hub import snapshot_download; snapshot_download('Re
 To use a custom download location:
 ```bash
 export HF_HOME=/path/to/large/disk
-python3 -c "from huggingface_hub import snapshot_download; snapshot_download('RedHatAI/Qwen3-8B-FP8-dynamic')"
+scicode-lint vllm-server restart   # container picks up the new cache path
 ```
 
 ### WSL2 issues
 
-vLLM 0.16.0+ works well on WSL2. If you have issues:
-1. Ensure CUDA drivers are up to date
-2. Try: `export VLLM_USE_TRITON_FLASH_ATTN=0`
+Ensure CUDA drivers are up to date and `nvidia-smi` works from WSL2. Then verify container GPU passthrough as above.
 
 ## Configuration
 

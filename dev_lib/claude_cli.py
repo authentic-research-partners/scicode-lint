@@ -43,6 +43,12 @@ from loguru import logger
 if TYPE_CHECKING:
     from asyncio.subprocess import Process
 
+# Transient retry budget for Claude CLI JSON calls: 3 total attempts.
+# Covers rare JSON-envelope glitches observed in sciwrite-lint production.
+# Does NOT cover timeouts (same prompt = same latency) or process errors
+# (usually auth/config issues, not transient).
+_CLAUDE_TRANSIENT_RETRIES = 2
+
 # Tools blocked for all automated Claude calls (prevent runaway agents)
 DEFAULT_DISALLOWED_TOOLS = [
     "Task",
@@ -415,6 +421,38 @@ class ClaudeCLI:
             label=label,
         )
 
+    @staticmethod
+    def _parse_json_response(stdout: str) -> dict[str, Any]:
+        """Parse Claude CLI --output-format=json output (two layers).
+
+        Layer 1: outer envelope ``{"result": "..."}``.
+        Layer 2: inner JSON object extracted from the result string (or
+        returned directly if already a dict).
+
+        Raises ClaudeCLIParseError on any failure.
+        """
+        try:
+            response = json.loads(stdout)
+        except json.JSONDecodeError as e:
+            raise ClaudeCLIParseError(f"Failed to parse outer JSON envelope: {e}", stdout) from e
+
+        content = response.get("result", response.get("content", ""))
+
+        if isinstance(content, dict):
+            return content
+
+        if not isinstance(content, str):
+            raise ClaudeCLIParseError(f"Unexpected content type: {type(content)}", stdout)
+
+        json_match = re.search(r"\{.*\}", content, re.DOTALL)
+        if not json_match:
+            raise ClaudeCLIParseError(f"No JSON object found in response: {content[:200]}", stdout)
+
+        try:
+            return json.loads(json_match.group())  # type: ignore[no-any-return]
+        except json.JSONDecodeError as e:
+            raise ClaudeCLIParseError(f"Failed to parse inner JSON: {e}", stdout) from e
+
     async def arun_json(
         self,
         prompt: str,
@@ -424,9 +462,10 @@ class ClaudeCLI:
     ) -> dict[str, Any]:
         """Run Claude CLI with --output-format json and parse the response.
 
-        Handles the two-layer JSON parsing:
-        1. Outer envelope: {"result": "..."} from --output-format json
-        2. Inner JSON object extracted from the result string
+        Retries on ``ClaudeCLIParseError`` up to ``_CLAUDE_TRANSIENT_RETRIES``
+        times with exponential backoff — mirrors the vLLM client's transient
+        retry policy. Does NOT retry on timeout or non-zero exit (those are
+        not transient).
 
         Rate limiting is applied automatically via global semaphore + RPM limiter.
 
@@ -442,42 +481,40 @@ class ClaudeCLI:
             ClaudeCLINotFoundError: If claude binary not found.
             ClaudeCLITimeoutError: If process exceeds timeout.
             ClaudeCLIProcessError: If non-zero exit code.
-            ClaudeCLIParseError: If JSON parsing fails.
+            ClaudeCLIParseError: If JSON parsing fails after all retries.
         """
         args = self._build_args(
             prompt,
             effort=effort,
             output_format="json",
         )
-        result = await self._exec(
-            args,
-            timeout=timeout or self.timeout,
-            prompt_len=len(prompt),
-            label="json",
-        )
-        stdout = result.stdout
+        effective_timeout = timeout or self.timeout
 
-        # Layer 1: parse outer JSON envelope
-        try:
-            response = json.loads(stdout)
-        except json.JSONDecodeError as e:
-            raise ClaudeCLIParseError(f"Failed to parse outer JSON envelope: {e}", stdout) from e
+        last_error: ClaudeCLIParseError | None = None
+        for attempt in range(_CLAUDE_TRANSIENT_RETRIES + 1):
+            result = await self._exec(
+                args,
+                timeout=effective_timeout,
+                prompt_len=len(prompt),
+                label="json",
+            )
+            try:
+                return self._parse_json_response(result.stdout)
+            except ClaudeCLIParseError as e:
+                last_error = e
+                if attempt < _CLAUDE_TRANSIENT_RETRIES:
+                    delay = 0.5 * (attempt + 1)
+                    logger.warning(
+                        "claude JSON parse failed (attempt {}/{}), retrying in {}s: {}",
+                        attempt + 1,
+                        _CLAUDE_TRANSIENT_RETRIES + 1,
+                        delay,
+                        str(e)[:200],
+                    )
+                    await asyncio.sleep(delay)
+                    continue
+                raise
 
-        content = response.get("result", response.get("content", ""))
-
-        # If content is already a dict, return it
-        if isinstance(content, dict):
-            return content
-
-        # Layer 2: extract inner JSON object from string
-        if not isinstance(content, str):
-            raise ClaudeCLIParseError(f"Unexpected content type: {type(content)}", stdout)
-
-        json_match = re.search(r"\{.*\}", content, re.DOTALL)
-        if not json_match:
-            raise ClaudeCLIParseError(f"No JSON object found in response: {content[:200]}", stdout)
-
-        try:
-            return json.loads(json_match.group())  # type: ignore[no-any-return]
-        except json.JSONDecodeError as e:
-            raise ClaudeCLIParseError(f"Failed to parse inner JSON: {e}", stdout) from e
+        # Unreachable: the loop either returns or raises, but mypy needs this.
+        assert last_error is not None
+        raise last_error

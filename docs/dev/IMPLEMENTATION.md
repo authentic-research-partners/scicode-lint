@@ -68,7 +68,7 @@ dev_lib/                    # Dev-only utilities (NOT installed — uses Claude 
   - `location` is required when `detected="yes"` or `"context-dependent"`
   - `detected="yes"` without location raises `ValueError` (triggers retry)
   - `detected="no"` with `location=None` is valid
-- Guaranteed valid responses via vLLM's `guided_json` constraint
+- Guaranteed valid responses via vLLM's `response_format: json_schema` constraint
 
 #### 5. Output Formatting (`output/formatter.py`)
 - **Text format**: Human-readable with icons and color-coded severity
@@ -285,16 +285,15 @@ Source code:
 
 Documentation:
 - `README.md` - User documentation
-- `docs_use_human/USAGE.md` - User guide
+- `docs/USAGE.md` - User guide
 - `IMPLEMENTATION.md` - This file
-- `CLAUDE.md` - AI agent instructions
 
 Testing:
 - `evals/` - Evaluation framework
 
 ## Architecture Compliance
 
-✅ All principles from `docs_dev_genai/ARCHITECTURE.md` implemented:
+✅ All principles from `docs/dev/ARCHITECTURE.md` implemented:
 1. Code-first prompts for prefix caching
 2. Detection only, no fixes
 3. One narrow prompt per pitfall
