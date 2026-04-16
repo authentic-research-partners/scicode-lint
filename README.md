@@ -6,8 +6,6 @@
 
 Runs locally on your GPU or institutional cluster. No cloud APIs, your code stays private, no unexpected GenAI bills.
 
-📄 **Paper:** [Samsonau, *scicode-lint: Detecting Methodology Bugs in Scientific Python Code with LLM-Generated Patterns* (arXiv:2603.17893)](https://arxiv.org/abs/2603.17893) — BibTeX in the Citation section below.
-
 ---
 
 ## TL;DR
