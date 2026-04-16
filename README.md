@@ -1,5 +1,7 @@
 # scicode-lint
 
+[![arXiv](https://img.shields.io/badge/arXiv-2603.17893-b31b1b.svg)](https://arxiv.org/abs/2603.17893)
+
 **AI-powered linter for ML code written for scientific applications. Catches methodology bugs that traditional linters miss: the kind that quietly invalidate your results.**
 
 Runs locally on your GPU or institutional cluster. No cloud APIs, your code stays private, no unexpected GenAI bills.
@@ -163,7 +165,7 @@ Two-stage filter (runs automatically):
 
 ## Project Status
 
-**Work in Progress** (v0.3.0 alpha)
+**Work in Progress** (v0.3.1 alpha)
 
 | Test Type | Precision | Recall | Description |
 |-----------|-----------|--------|-------------|
