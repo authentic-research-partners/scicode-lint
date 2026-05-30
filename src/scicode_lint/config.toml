@@ -75,11 +75,14 @@ max_model_len = 40960
 min_vram_mb = 15500
 
 # GPU memory utilization (0.0-1.0)
-# 0.9 = 90% of VRAM for model weights + KV cache. On 16 GB GPU:
-# 0.9 × 16 = 14.4 GB → ~9 GB model + ~5.4 GB KV cache (FP8).
-# Higher values increase KV capacity (more concurrent sequences)
-# but leave less room for other GPU workloads.
-gpu_memory_utilization = 0.9
+# 0.85 = 85% of VRAM for model weights + KV cache. On 16 GB GPU:
+# 0.85 × 16 = 13.6 GB → ~9 GB model + ~4.6 GB KV cache (FP8).
+# Leaves ~15% dedicated VRAM headroom. This matters most under WSL2, where
+# crossing dedicated VRAM silently spills into shared system RAM and collapses
+# throughput — measured here as 220 MB free at 0.9 on a 20 GB card.
+# Higher values increase KV capacity but risk that spill; lower if other GPU
+# workloads share the card.
+gpu_memory_utilization = 0.85
 
 # Reasoning parser for thinking models (passed as --reasoning-parser to vLLM)
 # Qwen3-specific: separates <think> blocks from JSON output server-side
@@ -131,9 +134,13 @@ lint_concurrency = 100
 max_concurrent_evals = 100
 
 # vLLM --max-num-seqs: Max sequences vLLM server can batch
-# This is vLLM's internal limit, passed to the vLLM container
-# Default 256 is vLLM's default; reduce if OOM during high concurrency
-vllm_max_num_seqs = 256
+# This is vLLM's internal limit, passed to the vLLM container.
+# Sized to cover client concurrency (lint_concurrency / max_concurrent_evals = 100)
+# with headroom. vLLM's 256 default is oversized for a 16-20 GB card: the memory
+# profiler reserves activation slots for every potential sequence, which on this
+# hardware drives num_gpu_blocks to 0 and forces a fallback KV pool. Raise only if
+# client concurrency rises and KV cache has room.
+vllm_max_num_seqs = 128
 
 [claude_cli]
 # Global rate limiting for all Claude CLI calls (shared across ALL callers)

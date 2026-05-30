@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Regenerate requirements-pinned.txt from the active environment.
 
-Filters `pip freeze` output down to the top-level dependencies declared in
-pyproject.toml (runtime + all optional extras). Transitive dependencies are
-not pinned.
+Filters `pip freeze` down to the runtime dependencies in pyproject.toml
+``[project] dependencies`` — what a ``pip install scicode-lint`` user gets.
+Optional/dev extras are NOT pinned. Transitive dependencies are not pinned.
 
 Run this from the environment you actively develop and test in (e.g. the
 `scicode` conda env) — that is the ground truth the pinned file represents.
@@ -26,15 +26,15 @@ PYPROJECT = REPO_ROOT / "pyproject.toml"
 OUTPUT = REPO_ROOT / "requirements-pinned.txt"
 
 HEADER = """\
-# Pinned versions of scicode-lint's top-level dependencies.
+# Pinned versions of scicode-lint's runtime dependencies.
 #
-# This file pins ONLY the packages declared in pyproject.toml (runtime + all
-# optional extras). Transitive dependencies are NOT pinned — pip will resolve
-# them within each top-level package's own constraints.
+# Pins ONLY pyproject.toml [project] dependencies — the packages a
+# `pip install scicode-lint` user gets. Dev/optional extras are NOT pinned here.
+# Transitive dependencies are NOT pinned — pip resolves them within each
+# top-level package's own constraints.
 #
-# Purpose: reproduce the exact versions of packages that scicode-lint is
-# actively developed and tested against. Generated from the maintainer's
-# working `scicode` conda env via `pip freeze`, filtered to declared deps.
+# Purpose: reproduce the exact runtime versions scicode-lint is developed and
+# tested against. Generated via `pip freeze`, filtered to declared runtime deps.
 #
 # Regenerate with:
 #   python scripts/regenerate_pinned_requirements.py
@@ -58,11 +58,9 @@ def load_declared_deps() -> set[str]:
     with PYPROJECT.open("rb") as f:
         data = tomllib.load(f)
     project = data["project"]
+    # Runtime dependencies only — the optional-dependency extras (dev/test tooling)
+    # are not pinned; this file reproduces what `pip install scicode-lint` resolves.
     specs: list[str] = list(project.get("dependencies", []))
-    for extra_name, extra_specs in project.get("optional-dependencies", {}).items():
-        if extra_name == "all":
-            continue  # recursive self-reference
-        specs.extend(extra_specs)
     return {normalize(s) for s in specs}
 
 
@@ -96,8 +94,8 @@ def build_expected_content() -> str:
     missing = sorted(declared - found)
     if missing:
         raise SystemExit(
-            f"error: declared deps not installed in current env: {missing}\n"
-            "Run this script from the environment where scicode-lint[all] is installed."
+            f"error: declared runtime deps not installed in current env: {missing}\n"
+            "Run this script from the environment where scicode-lint is installed."
         )
 
     kept.sort(key=str.lower)

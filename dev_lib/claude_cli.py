@@ -44,7 +44,8 @@ if TYPE_CHECKING:
     from asyncio.subprocess import Process
 
 # Transient retry budget for Claude CLI JSON calls: 3 total attempts.
-# Covers rare JSON-envelope glitches observed in sciwrite-lint production.
+# Covers rare JSON-envelope glitches — truncated or malformed framing
+# around the model's JSON payload — that have occurred in production.
 # Does NOT cover timeouts (same prompt = same latency) or process errors
 # (usually auth/config issues, not transient).
 _CLAUDE_TRANSIENT_RETRIES = 2

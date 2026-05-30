@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -51,6 +52,18 @@ def fake_py_file(tmp_path: Path) -> Path:
 
 
 class TestLintExitCodes:
+    @pytest.fixture(autouse=True)
+    def _no_vllm(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Build the linter without probing a real vLLM (zero-services rule).
+
+        ``SciCodeLinter.__init__`` calls ``create_client`` → ``detect_vllm``; with
+        no server that raises before the mocked ``check_file`` runs. The client is
+        never actually used since ``check_file`` is mocked per-test.
+        """
+        monkeypatch.setattr(
+            "scicode_lint.linter.create_client", lambda _cfg: MagicMock(), raising=True
+        )
+
     def test_clean_file_returns_zero(
         self,
         fake_py_file: Path,

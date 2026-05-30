@@ -5,6 +5,50 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-05-30
+
+### Changed
+- **Much faster structured output under concurrency.** Length constraints
+  (`maxLength`/`maxItems`) are no longer sent in the vLLM JSON schema — they hit
+  XGrammar's slow path and caused request timeouts at high concurrency (default
+  `lint_concurrency=100`). Field caps are now validated after decoding (a rare
+  over-run is re-sampled, not truncated); numeric ranges and enums are unchanged.
+  See `src/scicode_lint/llm/CONSTRAINED_DECODING.md`.
+- **Right-sized vLLM VRAM defaults.** `gpu_memory_utilization` 0.9 → 0.85 and
+  `vllm_max_num_seqs` 256 → 128, leaving more dedicated-VRAM headroom (avoids
+  spilling into shared system RAM, which collapses throughput) while keeping a
+  healthy KV-cache pool for the default concurrency.
+- **Thinking-budget ladder on length-based failures.** When vLLM returns
+  `content=None` or `finish_reason='length'`, the transient-retry loop now
+  halves the thinking budget on each retry (`3584 → 1792 → 896 → …`) instead
+  of retrying with the same budget that just failed. Halving drops straight
+  to `0` (thinking disabled) once it would fall below 64 tokens. Per-call
+  `thinking_budget` overrides anchor the ladder. `JSONDecodeError` keeps
+  the prior same-budget exponential backoff (the problem there is the wire,
+  not thinking). Retry budget unchanged: 2 retries, 3 attempts total. See
+  `src/scicode_lint/llm/CONSTRAINED_DECODING.md` § Transient retry.
+
+### Added
+- **`evals/ladder_recovery.py`** — forcing eval that induces length failure
+  against a live vLLM (`max_completion_tokens=256`, starting
+  `thinking_budget=200`), captures the ladder log stream, and verifies that
+  budgets chain and strictly decrease and that the call recovers at
+  thinking-off. Empirical sibling to the mocked `TestThinkingLadder*` unit
+  tests in `tests/test_llm_client.py`.
+- **`evals/wire_bounds_throughput.py`** — regression benchmark that fires
+  concurrent structured calls with vs. without wire-level schema bounds and reports
+  success rate, latency, and throughput, guarding against re-introducing the
+  XGrammar slow path.
+
+### Fixed
+- **Formatter status lines no longer wrap mid-phrase on long paths.** The text
+  formatter's error and findings-header lines are printed with soft wrapping, so a
+  long file path can't split "Error during linting" (or "— N issues found") across
+  a line.
+- **vLLM reachability probe is now async.** The first structured call's connection
+  probe used a synchronous `httpx.Client`, briefly blocking the event loop on a cold
+  call; it now uses `httpx.AsyncClient`.
+
 ## [0.3.1] - 2026-04-16
 
 ### Changed
@@ -343,7 +387,11 @@ Initial public release.
 - Evaluation framework with precision/recall metrics
 - Designed for both human developers and AI coding agents
 
+[0.4.0]: https://github.com/authentic-research-partners/scicode-lint/releases/tag/v0.4.0
+[0.3.1]: https://github.com/authentic-research-partners/scicode-lint/releases/tag/v0.3.1
 [0.3.0]: https://github.com/authentic-research-partners/scicode-lint/releases/tag/v0.3.0
+[0.2.3]: https://github.com/authentic-research-partners/scicode-lint/releases/tag/v0.2.3
+[0.2.2]: https://github.com/authentic-research-partners/scicode-lint/releases/tag/v0.2.2
 [0.2.1]: https://github.com/authentic-research-partners/scicode-lint/releases/tag/v0.2.1
 [0.2.0]: https://github.com/authentic-research-partners/scicode-lint/releases/tag/v0.2.0
 [0.1.6]: https://github.com/authentic-research-partners/scicode-lint/releases/tag/v0.1.6

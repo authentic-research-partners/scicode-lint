@@ -74,6 +74,59 @@ warnings.filterwarnings(
 # See CONSTRAINED_DECODING.md § "The three failure modes" for why content=None happens.
 _TRANSIENT_RETRIES = 2
 
+
+class StructuredOutputRetryError(ValueError):
+    """A vLLM structured-output response that failed to parse or validate.
+
+    Raised by ``_handle_response`` for the two recoverable response failures:
+    ``JSONDecodeError`` (rare wire/streaming glitch) and Pydantic ``ValidationError``
+    (a field exceeded its cap now that length bounds are stripped from the wire).
+    The transient-retry loop catches this *type* — not a substring of the message —
+    and resamples. Subclasses ``ValueError`` so existing value-error handling and the
+    error message contract are preserved.
+
+    Attributes:
+        kind: ``"JSON parse"`` or ``"schema validation"`` — for logging only.
+    """
+
+    def __init__(self, message: str, *, kind: str) -> None:
+        super().__init__(message)
+        self.kind = kind
+
+
+# Thinking-budget ladder: on finish_reason=length or content=None, halve the
+# thinking budget and retry. Once halving would fall below _THINKING_FLOOR,
+# drop straight to 0 (thinking disabled) as the final ladder step.
+#
+# Rationale: same-budget retries on length-based failures almost certainly fail
+# again — if 3584 thinking tokens exhausted max_completion_tokens the first
+# time, they will the second time too. Stepping down recovers on the retry
+# instead of burning all attempts at the same broken budget.
+_THINKING_FLOOR = 64
+_THINKING_OFF = 0
+
+
+def _step_down_thinking(current: int) -> int | None:
+    """Return the next smaller thinking budget, or ``None`` if ladder exhausted.
+
+    Halves the current budget. When the halved value falls below
+    ``_THINKING_FLOOR``, returns ``0`` (thinking disabled) as the final
+    ladder step — tiny budgets are rarely enough for useful reasoning, so
+    we skip straight to "off" rather than crawl through sub-floor values.
+    Returns ``None`` when called with ``current <= 0`` (already at floor).
+
+    Args:
+        current: Current thinking budget in tokens.
+
+    Returns:
+        Next budget to try, or ``None`` if the ladder has been exhausted.
+    """
+    if current <= 0:
+        return None
+    halved = current // 2
+    return halved if halved >= _THINKING_FLOOR else _THINKING_OFF
+
+
 T = TypeVar("T", bound=BaseModel)
 
 
@@ -199,11 +252,15 @@ class VLLMClient(LLMClient):
 
         self._max_model_len = self.config.max_model_len
 
-    def _ensure_reachable(self) -> None:
-        """Probe base_url once on first use; raise LLMConnectionError on failure."""
+    async def _ensure_reachable(self) -> None:
+        """Probe base_url once on first use; raise LLMConnectionError on failure.
+
+        Awaited from the async call path — the probe uses ``httpx.AsyncClient`` so
+        it never blocks the event loop (async-native rule).
+        """
         if self._probed:
             return
-        _probe_base_url(self.config.base_url)
+        await _probe_base_url(self.config.base_url)
         self._probed = True
 
     @staticmethod
@@ -312,7 +369,8 @@ class VLLMClient(LLMClient):
             succeeded. If result is None, correction_prompt contains the retry prompt.
 
         Raises:
-            ValueError: If JSON parsing or schema validation fails (non-retryable)
+            StructuredOutputRetryError: If JSON parsing or schema validation fails
+                (the transient-retry loop resamples on this type).
         """
         try:
             result = self._parse_and_validate(response_text, schema, thinking_content)
@@ -347,13 +405,12 @@ class VLLMClient(LLMClient):
                 return schema.model_validate(flipped_data), None
 
         except (json.JSONDecodeError, ValidationError) as e:
-            error_type = (
-                "JSON parse" if isinstance(e, json.JSONDecodeError) else "schema validation"
-            )
-            logger.error(f"LLM response {error_type} failed")
-            raise ValueError(
-                f"LLM returned invalid response ({error_type} error). "
-                f"Model not producing valid structured output. Error: {e}"
+            kind = "JSON parse" if isinstance(e, json.JSONDecodeError) else "schema validation"
+            logger.error(f"LLM response {kind} failed")
+            raise StructuredOutputRetryError(
+                f"LLM returned invalid response ({kind} error). "
+                f"Model not producing valid structured output. Error: {e}",
+                kind=kind,
             ) from e
 
     def _build_api_params(
@@ -425,9 +482,16 @@ class VLLMClient(LLMClient):
         vLLM's reasoning parser separates thinking from JSON server-side.
 
         Two retry layers:
-        1. **Transient retry** — retries on content=None (thinking exhausted
-           max_tokens before JSON started) or rare JSONDecodeError (network
-           glitch). Up to ``_TRANSIENT_RETRIES`` retries with exponential backoff.
+        1. **Transient retry** — two branches depending on failure kind:
+           - *Length-based failure* (``finish_reason='length'`` or ``content=None``)
+             means thinking exhausted ``max_completion_tokens`` before JSON
+             completed. Same-budget retries almost always fail again, so we
+             step the thinking budget down the ladder (see ``_step_down_thinking``)
+             and retry with a short 0.2s delay.
+           - *JSON parse error* is a rare network/streaming glitch. We retry
+             with the **same** budget using exponential backoff (0.5s, 1.0s),
+             since dropping thinking wouldn't help here.
+           Up to ``_TRANSIENT_RETRIES`` retries total across both branches.
         2. **Missing-location retry** — retries once with a correction prompt
            when model returns detected='yes' but no location.
 
@@ -441,7 +505,7 @@ class VLLMClient(LLMClient):
             LLMConnectionError: If the configured vLLM server is unreachable
                 (probed on first call, cached thereafter).
         """
-        self._ensure_reachable()
+        await self._ensure_reachable()
         start_time = time.time()
         logger.debug(f"Starting async vLLM call for {schema.__name__}")
 
@@ -450,17 +514,27 @@ class VLLMClient(LLMClient):
         correction_prompt: str | None = None
         max_location_attempts = 2
 
+        # Track the current thinking budget across retries. Starts from per-call
+        # override (if any) or the config default, and is stepped down by the
+        # ladder on length-based failures. Persists across location-retry loops
+        # too — if this prompt/model combo needs less thinking, the correction
+        # prompt benefits from the same lower budget.
+        current_thinking_budget: int = overrides.get("thinking_budget", self.config.thinking_budget)
+
         for location_attempt in range(max_location_attempts):
             current_prompt = user_prompt
             if correction_prompt:
                 current_prompt = user_prompt + correction_prompt
                 logger.info(f"Retrying with correction prompt (attempt {location_attempt + 1})")
 
-            # Transient retry loop: empty content or invalid JSON.
-            # Both are "try again" situations — empty content means thinking
-            # exhausted max_tokens, invalid JSON means rare network glitch.
+            # Transient retry loop with two branches:
+            # - Length-based failure (finish_reason=length or content=None)
+            #   → step thinking budget down the ladder, short 0.2s delay.
+            # - JSON parse error (rare network/streaming glitch)
+            #   → same budget, exponential backoff.
             last_transient_error: Exception | None = None
             for transient_attempt in range(_TRANSIENT_RETRIES + 1):
+                call_overrides = {**overrides, "thinking_budget": current_thinking_budget}
                 try:
                     completion = await self._async_client.chat.completions.create(
                         **self._build_api_params(
@@ -469,7 +543,7 @@ class VLLMClient(LLMClient):
                             json_schema,
                             schema.__name__,
                             max_tokens,
-                            **overrides,
+                            **call_overrides,
                         )
                     )
                 except Exception as e:
@@ -493,28 +567,46 @@ class VLLMClient(LLMClient):
 
                 message = completion.choices[0].message
                 response_text = message.content
+                finish_reason = completion.choices[0].finish_reason
                 thinking_content = getattr(message, "reasoning", None) or getattr(
                     message, "reasoning_content", None
                 )
 
-                # Empty content: thinking consumed entire max_tokens budget
-                if response_text is None:
-                    last_transient_error = ValueError(
-                        f"vLLM returned empty content for {schema.__name__}. "
-                        f"Thinking likely exhausted max_completion_tokens ({max_tokens})."
+                # Length-based failure: either content=None (thinking consumed
+                # the entire budget before JSON started) or finish_reason=length
+                # with truncated JSON. Step the thinking budget down and retry.
+                length_failure = response_text is None or finish_reason == "length"
+                if length_failure:
+                    failure_desc = (
+                        "empty content"
+                        if response_text is None
+                        else f"finish_reason={finish_reason}"
                     )
-                    if transient_attempt < _TRANSIENT_RETRIES:
-                        delay = 0.5 * (transient_attempt + 1)
-                        logger.warning(
-                            f"vLLM empty content for {schema.__name__} "
-                            f"(attempt {transient_attempt + 1}/{_TRANSIENT_RETRIES + 1}), "
-                            f"retrying in {delay}s"
-                        )
-                        await asyncio.sleep(delay)
-                        continue
-                    raise last_transient_error
+                    last_transient_error = ValueError(
+                        f"vLLM length-based failure for {schema.__name__} "
+                        f"({failure_desc}). Thinking budget {current_thinking_budget} "
+                        f"too aggressive; max_completion_tokens={max_tokens}."
+                    )
+                    next_budget = _step_down_thinking(current_thinking_budget)
+                    if next_budget is None or transient_attempt >= _TRANSIENT_RETRIES:
+                        raise last_transient_error
+                    logger.warning(
+                        f"vLLM length-based failure ({failure_desc}) for {schema.__name__} "
+                        f"(attempt {transient_attempt + 1}/{_TRANSIENT_RETRIES + 1}), "
+                        f"stepping thinking budget {current_thinking_budget} → {next_budget}"
+                    )
+                    current_thinking_budget = next_budget
+                    await asyncio.sleep(0.2)
+                    continue
 
-                # Try to parse — JSONDecodeError is transient (rare network glitch)
+                # Try to parse. Two recoverable "bad response" modes share this
+                # same-budget resample backoff:
+                #  - JSONDecodeError: rare network/streaming glitch.
+                #  - schema-validation over-run: vllm_schema strips length caps
+                #    (maxLength/maxItems) from the wire, so a string/list field can
+                #    exceed its Pydantic cap. A fresh sample at temp>0 almost always
+                #    complies. We rerun rather than truncate, so the over-run is
+                #    surfaced and re-attempted — never silently clipped.
                 try:
                     result, correction_prompt = self._handle_response(
                         response_text,
@@ -526,16 +618,16 @@ class VLLMClient(LLMClient):
                         thinking_content,
                     )
                     break  # Parsed successfully (result may be None for correction retry)
-                except ValueError as e:
-                    if "JSON parse" not in str(e):
-                        raise  # Non-JSON errors (schema validation) are not transient
+                except StructuredOutputRetryError as e:
+                    # Type-based: both parse and validation over-runs resample.
+                    # Any other exception propagates (fail loudly).
                     last_transient_error = e
                     if transient_attempt < _TRANSIENT_RETRIES:
                         delay = 0.5 * (transient_attempt + 1)
                         logger.warning(
-                            f"vLLM JSON parse error for {schema.__name__} "
+                            f"vLLM {e.kind} for {schema.__name__} "
                             f"(attempt {transient_attempt + 1}/{_TRANSIENT_RETRIES + 1}), "
-                            f"retrying in {delay}s"
+                            f"resampling in {delay}s"
                         )
                         await asyncio.sleep(delay)
                         continue
@@ -564,11 +656,12 @@ class VLLMClient(LLMClient):
         return self._max_model_len
 
 
-def _probe_base_url(base_url: str, timeout: float = 3.0) -> None:
+async def _probe_base_url(base_url: str, timeout: float = 3.0) -> None:
     """Verify a base URL responds at ``/v1/models``; raise fast on failure.
 
-    Called from ``VLLMClient.__init__`` so callers get an immediate
-    ``LLMConnectionError`` instead of a multi-minute openai retry loop.
+    Awaited from ``VLLMClient._ensure_reachable`` on the first structured call so
+    callers get an immediate ``LLMConnectionError`` instead of a multi-minute openai
+    retry loop. Uses ``httpx.AsyncClient`` so it never blocks the event loop.
 
     Args:
         base_url: Root URL of the vLLM server (no trailing ``/v1``).
@@ -579,8 +672,8 @@ def _probe_base_url(base_url: str, timeout: float = 3.0) -> None:
     """
     probe_url = f"{base_url.rstrip('/')}/v1/models"
     try:
-        with httpx.Client(timeout=timeout) as client:
-            response = client.get(probe_url)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.get(probe_url)
     except (httpx.ConnectError, httpx.TimeoutException, httpx.HTTPError) as e:
         raise LLMConnectionError(
             f"vLLM server at {base_url} is unreachable: {type(e).__name__}: {e}\n\n"

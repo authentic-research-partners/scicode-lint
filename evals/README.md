@@ -341,3 +341,21 @@ python evals/run_eval.py --pattern ml-001
 2. Review alignment metrics to identify quality issues or overly strict ground truth
 3. Use `run_eval.py --skip-judge` for fast regression checks
 4. Run integration eval before release: `python evals/integration/integration_eval.py --generate-count 10`
+
+---
+
+## LLM-Client Behavior Evals
+
+One-off evals that validate `scicode_lint.llm.client` behavior against live
+vLLM, complementing the mocked unit tests in `tests/test_llm_client.py`.
+
+| Script | What it verifies |
+|--------|------------------|
+| `ladder_recovery.py` | Thinking-budget ladder steps down and recovers on `finish_reason=length` / `content=None` — see `src/scicode_lint/llm/CONSTRAINED_DECODING.md` § Transient retry |
+| `wire_bounds_throughput.py` | Wire-schema length bounds (`maxLength`/`maxItems`) trigger XGrammar's slow path under concurrency — benchmarks bounded vs stripped throughput; guards the wire-stripping decision in `vllm_schema` |
+
+Run manually when modifying retry logic:
+
+```bash
+python evals/ladder_recovery.py
+```

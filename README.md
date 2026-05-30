@@ -163,7 +163,7 @@ Two-stage filter (runs automatically):
 
 ## Project Status
 
-**Work in Progress** (v0.3.1 alpha)
+**Work in Progress** (v0.4.0 alpha)
 
 | Test Type | Precision | Recall | Description |
 |-----------|-----------|--------|-------------|

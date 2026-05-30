@@ -1,55 +1,76 @@
 """Pydantic models for structured LLM output.
 
-Every string field has a `max_length` (chars) set at ~2x natural output length,
-and every list field has `max_length` on both the list and each item. These tell
-vLLM's constrained decoder how much space each value gets, so the full JSON
-structure completes within `max_completion_tokens` regardless of what the model
-generates. The limits are ceilings, not targets — the model writes naturally
-below them.
+Every string field has a `max_length` (chars) and every list field has a
+`max_length` (item count), set at ~2x natural output length. **These bounds are
+post-decode guards, not wire constraints.** `vllm_schema()` strips the length/count
+keys (`maxLength`/`maxItems`/`minLength`/`minItems`) from the JSON schema sent to
+vLLM, because they compile into XGrammar's grammar slow path, which collapses
+structured-output throughput under concurrency
+(see `evals/wire_bounds_throughput.py`). Numeric range keys (`minimum`/`maximum`)
+are *not* stripped — an isolation measurement proved they don't trigger the slow
+path, so `confidence`'s 0-1 range stays decoder-enforced.
 
-Sizing math (at worst-case 3 chars/token):
+Output size is controlled by three layers that never touch the decoder:
 
-    NamedLocation.name:          200 chars → ~67 tokens
-    DetectionResult.reasoning:   400 chars → ~133 tokens
-    Enums + floats + overhead:              ~25 tokens
-                                          ────────────
-    DetectionResult worst-case:            ~225 tokens
-
-That leaves ~3870 of the 4096 `max_completion_tokens` budget for thinking
-(current `thinking_budget=3584`). Without these caps, a verbose `reasoning`
-field alone could consume the entire JSON budget, causing truncation mid-field
-(`finish_reason=length`) or — if thinking runs long first — `content=None`
-with no JSON at all. See `llm/CONSTRAINED_DECODING.md` for the full rationale
-and empirical findings.
+1. Prompt guidance ("1-2 sentences, under ~N words", "at most N items") — the
+   model is asked to stay under the cap, so it writes short by default.
+2. `max_completion_tokens` caps total output; over-runs surface as
+   `finish_reason=length` and recover via the thinking-budget ladder (see
+   `llm/CONSTRAINED_DECODING.md` § Transient retry).
+3. The Pydantic `max_length` validates decoded output. An over-run raises
+   `ValidationError`, which the client treats as a **retryable** failure and
+   reruns (a fresh sample almost always complies) — over-runs are surfaced and
+   re-attempted, never silently clipped.
 
 `thinking` is intentionally unbounded: it's populated post-hoc by the client
 from vLLM's server-side `message.reasoning` channel (via `--reasoning-parser
-qwen3`), not decoded into the JSON response. A Pydantic `max_length` cap here
-would reject legitimate long reasoning content from the side channel.
+qwen3`), not decoded into the JSON response.
 """
 
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+# Length/count constraints compile into XGrammar's grammar slow path: shipping
+# `maxLength` on the wire collapses structured-output throughput under concurrency
+# (see evals/wire_bounds_throughput.py). vllm_schema strips this family;
+# the Pydantic model still enforces the caps at construction, and an over-run from
+# the now-unbounded wire is caught post-decode and rerun by the client.
+#
+# Only length/count keys are stripped. Numeric range keys (`minimum`/`maximum`) are
+# NOT stripped: an isolation run with `maxLength` removed but `minimum`/`maximum`
+# kept on the wire recovered full speed (100% / 7.9s), proving ranges don't trigger
+# the slow path — so `confidence`'s 0-1 range stays decoder-enforced.
+_WIRE_BANNED_KEYS = frozenset({"maxLength", "minLength", "maxItems", "minItems"})
+
 
 def vllm_schema(model: type[BaseModel]) -> dict[str, Any]:
-    """Generate a JSON schema dict for vLLM's constrained decoder.
+    """Generate the wire JSON schema dict for vLLM's constrained decoder.
 
-    Inlines ``$ref`` references (vLLM's XGrammar backend doesn't resolve
-    ``$defs``) and strips Pydantic metadata (``title``) to keep the schema
-    compact. Use this instead of ``model.model_json_schema()`` when passing
-    schemas to ``response_format: json_schema``.
+    Two transforms make the schema safe and fast for vLLM's XGrammar backend:
+
+    1. **Inline ``$ref``** — XGrammar doesn't resolve ``$defs``, so nested models
+       (e.g. ``DetectionResult.location`` → ``NamedLocation``) are inlined.
+    2. **Strip length/count keys** (``maxLength``, ``maxItems``, ``minLength``,
+       ``minItems``) — these compile into XGrammar's grammar slow path and collapse
+       throughput under concurrency (see ``evals/wire_bounds_throughput.py``). The
+       Pydantic model keeps the caps for post-decode validation; an over-run from the
+       unbounded wire is rerun by the client. Numeric ranges (``minimum``/``maximum``)
+       and enums are *kept* — an isolation run proved they don't trigger the slow path.
+
+    Also drops Pydantic ``title`` metadata to keep the schema compact.
 
     Args:
         model: Pydantic model class.
 
     Returns:
-        JSON schema dict with all ``$ref`` entries resolved inline.
+        Flat JSON schema dict with no ``$ref``, no ``$defs``, and no
+        length/count constraint keys (numeric ranges and enums retained).
 
     Example:
         >>> schema = vllm_schema(DetectionResult)
         >>> assert "$ref" not in str(schema)
+        >>> assert "maxLength" not in str(schema)
     """
     raw = model.model_json_schema()
     defs = raw.pop("$defs", {})
@@ -59,7 +80,11 @@ def vllm_schema(model: type[BaseModel]) -> dict[str, Any]:
             if "$ref" in obj:
                 ref_name = obj["$ref"].rsplit("/", 1)[-1]
                 return _resolve(defs[ref_name])
-            return {k: _resolve(v) for k, v in obj.items() if k != "title"}
+            return {
+                k: _resolve(v)
+                for k, v in obj.items()
+                if k != "title" and k not in _WIRE_BANNED_KEYS
+            }
         if isinstance(obj, list):
             return [_resolve(v) for v in obj]
         return obj
@@ -120,8 +145,8 @@ class DetectionResult(BaseModel):
     )
     reasoning: str = Field(
         max_length=400,
-        description="Brief explanation (1-2 sentences) of why this decision was made. "
-        "Explain what pattern was detected or why it's not an issue.",
+        description="Brief explanation (1-2 sentences, under ~50 words) of why this "
+        "decision was made. Explain what pattern was detected or why it's not an issue.",
     )
     thinking: str | None = Field(
         default=None,

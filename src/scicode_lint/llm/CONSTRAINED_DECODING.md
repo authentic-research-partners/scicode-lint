@@ -63,15 +63,18 @@ Both use the same XGrammar/Outlines backend. `guided_json` (passed via `extra_bo
 
 Always use Pydantic models to generate JSON schemas. Hand-written schemas may have subtle issues that cause unreliable constraint enforcement.
 
-### `$ref` inlining via `vllm_schema()`
-
-Pydantic generates `$ref` entries for nested models (e.g., `DetectionResult.location`
-references `NamedLocation` via `$ref: "#/$defs/NamedLocation"`). vLLM's XGrammar
-backend may not resolve `$defs` — it expects a flat schema.
+### Wire schema via `vllm_schema()`
 
 **Always use `vllm_schema()` instead of `model.model_json_schema()`** when passing
-schemas to vLLM. This function inlines all `$ref` references and strips Pydantic
-metadata (`title` fields).
+schemas to vLLM. It applies two transforms that make the schema safe and fast for
+XGrammar:
+
+1. **Inlines `$ref`.** Pydantic emits `$ref` for nested models (e.g.
+   `DetectionResult.location` → `NamedLocation`). XGrammar may not resolve `$defs`,
+   so refs are inlined into a flat schema. (It also drops `title` metadata.)
+2. **Strips length/count constraint keys** — `maxLength`, `maxItems`, `minLength`,
+   `minItems`. See the next section for why. Numeric ranges (`minimum`/`maximum`)
+   are *kept* — they don't trigger the slow path.
 
 ```python
 from scicode_lint.llm.models import vllm_schema, DetectionResult
@@ -87,17 +90,46 @@ response_format={
 }
 ```
 
-Regression tests in `tests/test_schema_bounds.py` verify no `$ref` entries remain
-after inlining.
+Regression tests in `tests/test_schema_bounds.py` verify the wire schema has no
+`$ref` and none of the banned constraint keys, while the Pydantic model still
+enforces them.
 
-### Schema bounds: `max_length` and `max_items` are mandatory
+### The wire schema carries NO length/count bounds
 
-Every string field in a response schema gets `Field(max_length=N)`, and every
-`list[X]` field gets both `Field(max_length=N)` (list size) and per-item bounds
-via `Annotated[str, StringConstraints(max_length=M)]`. These are enforced at
-the decoder level by XGrammar and make the response size bounded and
-predictable. This is **not optional** — without it, a verbose field or a
-runaway list can blow through the JSON-response portion of `max_completion_tokens`.
+Length/count keys (`maxLength`, `maxItems`, `minLength`, `minItems`) compile into
+XGrammar's grammar **slow path**. Shipping them on the wire collapses throughput
+under concurrency. Measured on this stack (qwen3-8b-fp8, vLLM v0.18.0) via
+`evals/wire_bounds_throughput.py`, `DetectionResult` at concurrency 64:
+
+| wire schema | success rate | wall-clock | p50 latency |
+|---|---|---|---|
+| **bounded** (keys present) | 8% (92% timed out) | 361 s | 239 s |
+| **unbounded** (length keys stripped) | 100% | 6.7 s | 4.1 s |
+
+**~50× slower, 92-point success collapse.** `lint_concurrency` defaults to 100 and a
+single file fans out across all patterns, so this is the common path, not a corner
+case. `vllm_schema()` therefore strips the length/count keys.
+
+**Only length/count keys are stripped — not numeric ranges.** An isolation
+measurement removed `maxLength` while keeping `minimum`/`maximum` on the wire and
+recovered full speed (100% / 7.9 s), proving numeric ranges don't trigger the slow
+path. So `confidence`'s `ge=0/le=1`
+range stays decoder-enforced, and enums/`Literal` are kept too (XGrammar handles
+both fine).
+
+The Pydantic `Field(max_length=N)` constraints **stay on the model**; they are
+post-decode guards, not wire constraints. Output size is controlled by three layers
+that never touch the decoder:
+
+1. **Prompt guidance** — every bounded free-text field's description states the cap
+   in words ("1-2 sentences, under ~N words") and every list says "at most N". The
+   model is asked to stay under, so it writes short by default.
+2. **`max_completion_tokens`** caps total output; over-runs surface as
+   `finish_reason=length` and recover via the thinking-budget ladder (below).
+3. **Rerun on over-run.** If the model still exceeds a Pydantic bound, `model_validate`
+   raises and the client **resamples** (see § Transient retry). A fresh sample at
+   temp>0 almost always complies. Over-runs are surfaced and re-attempted — never
+   silently truncated (that would hide the model misbehaving).
 
 ### The three failure modes
 
@@ -128,55 +160,91 @@ max_tokens=500, budget=4096 → content=valid JSON
 
 ### Transient retry
 
-The client retries on two transient failure modes:
+The client retries on three recoverable failure modes, each with its own recovery
+branch. All share a single budget: `_TRANSIENT_RETRIES = 2` (3 total attempts).
 
-1. **Empty content** (`content=None`) — thinking consumed the entire `max_completion_tokens`
-   budget before JSON generation started. This is the dominant failure mode.
-2. **Invalid JSON** (`JSONDecodeError`) — rare network glitch or vLLM streaming bug.
-   Constrained decoding should prevent this, but transient failures occur in practice.
+**1. Length-based failure — thinking-budget ladder.**
+Covers both `content=None` (thinking consumed the entire `max_completion_tokens`
+budget before JSON started) and `finish_reason='length'` with truncated JSON.
+Same-budget retries here are almost guaranteed to fail again — if 3584 thinking
+tokens exhausted the budget once, they will next time too. Instead, the client
+steps the thinking budget down via `_step_down_thinking`:
 
-`_TRANSIENT_RETRIES = 2` (3 total attempts). Exponential backoff: 0.5s, 1.0s.
-After all transient retries are exhausted, the error is raised.
+```
+3584 → 1792 → 896 → 448 → 224 → 112 → 0 (off)
+```
 
-Non-transient errors (schema validation, missing location) are handled separately
-and are not retried by this loop. Missing-location errors trigger a correction prompt
-retry (different mechanism).
+Each step halves the current budget; once halving would fall below
+`_THINKING_FLOOR = 64`, the next step drops straight to `0` (thinking disabled).
+A short 0.2s delay is used between retries. Per-call `thinking_budget` overrides
+are respected — the ladder starts from whatever the caller passed, not the
+config default. When the ladder is exhausted (budget already `0`), the error
+is raised immediately.
+
+**2. Invalid JSON — same-budget exponential backoff.**
+`JSONDecodeError` is a rare network/streaming glitch; constrained decoding
+should prevent this, but transient failures occur in practice. Here the
+thinking budget is *not* stepped — the problem isn't thinking, it's the wire
+or the server. Retries use exponential backoff: 0.5s, 1.0s.
+
+**3. Schema-validation over-run — same-budget resample.**
+Because length caps are stripped from the wire (§ "The wire schema carries no
+length/count bounds"), the model can exceed a Pydantic `max_length`/`max_items`.
+`model_validate` raises, and the client resamples the same prompt — over-runs are
+re-attempted, never clipped. Like branch 2 the thinking budget is *not* stepped; a
+fresh sample at temp>0 almost always complies. Everything still enforced by the
+decoder (types, required fields, enums, numeric ranges) cannot reach this branch, so
+a residual validation failure is almost always a length over-run.
+
+The branches compose and share one budget: a length failure at attempt 0 steps the
+thinking budget down; a JSON-parse or over-run failure at attempt 1 keeps that
+stepped-down budget. After the budget is exhausted the error is raised loudly. Tests
+in `tests/test_llm_client.py` lock in all three branches and their interaction.
+
+Missing-location errors are handled separately (not by this loop): they trigger a
+correction-prompt retry, and on final failure flip the result to `detected="no"`.
 
 ### Prompt mirror pattern
 
-For every decoder-enforced cap (list `maxItems`, string `maxLength`), the prompt
-carries matching soft guidance. The decoder enforces the hard cap; the prompt
-decides which content survives when the cap bites. Examples:
+The cap lives on the Pydantic model but not on the wire, so the **prompt is the
+primary size control** — each bounded field's description states its cap and asks
+the model to stay under it:
 
 - List cap → "at most N items, most important first"
-- String cap → "under N words" or "1-2 sentences"
+- String cap → "under ~N words" or "1-2 sentences"
 
-If the cap never bites, the model writes naturally below the limit.
+Keep the prompt hint in sync with the Pydantic `max_length` (~8 chars/word, so
+`max_length=400` → "under ~50 words"). The model writes below the limit by default;
+a rare over-run is caught post-decode and resampled (§ Transient retry), not enforced
+mid-token by the decoder.
 
-### Why `max_length` has no token cost
+### `max_length` is free on token count but lethal on throughput
 
-The `maxLength` JSON-schema keyword counts **characters**, not tokens, and
-behaves as a ceiling when set generously above natural output length.
-Empirical measurement on Qwen3 8B (n=10 runs per setting, thinking=low, max_tokens=2048):
+Two different costs, easy to conflate:
 
-```
-maxLength=none:  mean=438  stdev=41
-maxLength=150:   mean=404  stdev=30
-maxLength=500:   mean=452  stdev=54
-maxLength=1000:  mean=436  stdev=49
-```
+- **Token count: none.** `maxLength` counts characters, not tokens, and acts as a
+  ceiling above natural output. Single-request measurement on Qwen3 8B
+  (n=10/setting, thinking=low) shows output length is identical with or without it:
 
-All means within one standard deviation — `max_length` neither saves nor
-costs tokens when set at ~2x natural output. The value of bounding every
-field is **predictability**: guaranteed JSON completion inside the response
-budget, so no retry mechanism is needed for truncation. The schema itself
-prevents it.
+  ```
+  maxLength=none: 438   maxLength=150: 404   maxLength=500: 452   maxLength=1000: 436
+  ```
+  (all within one standard deviation)
+
+- **Throughput under concurrency: severe.** The same key *on the wire* triggers
+  XGrammar's grammar slow path — 54× slower and 92% timeouts at concurrency 64 (table
+  above). The single-request token-count benchmark cannot see this; it never issues
+  concurrent requests.
+
+An earlier "bounds are free, so no truncation retry is needed" claim conflated the
+two — it measured token count, not throughput. Bounds stay on the Pydantic model
+(post-decode validation) and are stripped from the wire by `vllm_schema()`.
 
 ### Sizing for scicode-lint
 
 scicode-lint allocates `max_completion_tokens=4096` with
 `thinking_budget=3584` for detection (see `config.py`), leaving ~512 tokens
-for the JSON response. Current bounded schemas (see `llm/models.py`):
+for the JSON response. Current schemas (see `llm/models.py`):
 
 | Schema | Worst-case response tokens | Headroom |
 |---|---|---|
@@ -189,9 +257,10 @@ risk of phase-2 truncation.
 ### Checklist when adding a new vLLM call site
 
 1. **Define the response schema** as a Pydantic `BaseModel`. Every `str` field
-   gets `Field(max_length=N)` at ~2x natural output. Every `list[X]` field gets
-   `Field(max_length=N)` (emits `maxItems: N`) AND per-item bounds if `X` is `str`
-   (use `Annotated[str, StringConstraints(max_length=M)]`).
+   gets `Field(max_length=N)` at ~2x natural output; every `list[X]` field gets
+   `Field(max_length=N)` and per-item bounds if `X` is `str`
+   (`Annotated[str, StringConstraints(max_length=M)]`). These are **post-decode
+   guards** — `vllm_schema()` strips them from the wire (XGrammar slow path).
 2. **Use `vllm_schema()`** to generate the JSON schema — not `model_json_schema()`.
 3. **Compute the worst-case token count** (`chars / 3 + JSON overhead`) and verify
    it's ≤ `max_completion_tokens − thinking_budget`.
@@ -199,7 +268,8 @@ risk of phase-2 truncation.
 5. **Nullable fields populated post-hoc** from side channels (e.g.,
    `DetectionResult.thinking`) stay unbounded.
 6. **Add schema-bounds regression tests** in `tests/test_schema_bounds.py`. Assert
-   `maxLength` and `maxItems` values with failure messages pointing here.
+   the wire schema (`vllm_schema(Model)`) has none of the banned constraint keys,
+   the model still rejects over-runs at construction, and enums are preserved.
 7. **Add a prompt mirror.** For every list cap, the prompt says "at most N, most
    important first". For string caps, "under N words".
 8. **Add retry-behavior tests** if using a custom call path (the standard

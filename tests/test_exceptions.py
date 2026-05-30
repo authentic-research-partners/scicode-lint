@@ -102,68 +102,74 @@ class TestMissingLocationError:
 
 
 class TestProbeBaseUrl:
-    """_probe_base_url fast-fails with LLMConnectionError on unreachable URLs."""
+    """_probe_base_url fast-fails with LLMConnectionError on unreachable URLs.
 
-    def test_connection_refused_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    The probe is async-native (``httpx.AsyncClient``), so the fakes implement the
+    async context-manager + async ``get`` protocol.
+    """
+
+    @pytest.mark.asyncio
+    async def test_connection_refused_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
         class _Refused:
             def __init__(self, *args: Any, **kwargs: Any) -> None:
                 pass
 
-            def __enter__(self) -> _Refused:
+            async def __aenter__(self) -> _Refused:
                 return self
 
-            def __exit__(self, *args: Any) -> None:
+            async def __aexit__(self, *args: Any) -> None:
                 return None
 
-            def get(self, *args: Any, **kwargs: Any) -> Any:
+            async def get(self, *args: Any, **kwargs: Any) -> Any:
                 raise httpx.ConnectError("refused")
 
-        monkeypatch.setattr(httpx, "Client", _Refused)
+        monkeypatch.setattr(httpx, "AsyncClient", _Refused)
 
         with pytest.raises(LLMConnectionError) as excinfo:
-            _probe_base_url("http://localhost:9999")
+            await _probe_base_url("http://localhost:9999")
         assert "unreachable" in str(excinfo.value).lower()
         assert "scicode-lint vllm-server start" in str(excinfo.value)
 
-    def test_non_200_status_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    @pytest.mark.asyncio
+    async def test_non_200_status_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
         class _NotVllm:
             def __init__(self, *args: Any, **kwargs: Any) -> None:
                 pass
 
-            def __enter__(self) -> _NotVllm:
+            async def __aenter__(self) -> _NotVllm:
                 return self
 
-            def __exit__(self, *args: Any) -> None:
+            async def __aexit__(self, *args: Any) -> None:
                 return None
 
-            def get(self, *args: Any, **kwargs: Any) -> Any:
-                resp = type("R", (), {"status_code": 404})()
-                return resp
+            async def get(self, *args: Any, **kwargs: Any) -> Any:
+                return type("R", (), {"status_code": 404})()
 
-        monkeypatch.setattr(httpx, "Client", _NotVllm)
+        monkeypatch.setattr(httpx, "AsyncClient", _NotVllm)
 
         with pytest.raises(LLMConnectionError) as excinfo:
-            _probe_base_url("http://localhost:5001")
+            await _probe_base_url("http://localhost:5001")
         assert "404" in str(excinfo.value)
 
-    def test_success_returns_none(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    @pytest.mark.asyncio
+    async def test_success_returns_none(self, monkeypatch: pytest.MonkeyPatch) -> None:
         class _OK:
             def __init__(self, *args: Any, **kwargs: Any) -> None:
                 pass
 
-            def __enter__(self) -> _OK:
+            async def __aenter__(self) -> _OK:
                 return self
 
-            def __exit__(self, *args: Any) -> None:
+            async def __aexit__(self, *args: Any) -> None:
                 return None
 
-            def get(self, *args: Any, **kwargs: Any) -> Any:
+            async def get(self, *args: Any, **kwargs: Any) -> Any:
                 return type("R", (), {"status_code": 200})()
 
-        monkeypatch.setattr(httpx, "Client", _OK)
+        monkeypatch.setattr(httpx, "AsyncClient", _OK)
 
         # Probe returns None on success; just verify it doesn't raise
-        _probe_base_url("http://localhost:5001")
+        await _probe_base_url("http://localhost:5001")
 
 
 class TestContextLengthError:

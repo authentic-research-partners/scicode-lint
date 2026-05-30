@@ -48,11 +48,19 @@ git config core.hooksPath scripts
 | `dev` | Development tools | ruff, mypy, pytest, pip-audit, bandit, safety |
 | `eval` | Evaluation framework | pytest, pytest-xdist |
 | `dashboard` | vLLM monitoring dashboard | streamlit, pandas, altair, nvidia-ml-py |
-| `vllm-server` | Local LLM server | vllm |
+| `real-world-demo` | PapersWithCode demo | datasets |
 
 ### Dependencies
 
-All project dependencies are managed in `pyproject.toml`. When adding dependencies, update `pyproject.toml`.
+Runtime dependencies are declared in `pyproject.toml` `[project] dependencies` and
+pinned to exact tested versions in `requirements-pinned.txt`. Development tools live
+in the optional-dependency groups above (permissive licenses only). When adding a
+dependency, update `pyproject.toml`; for a runtime dependency also regenerate the
+pin:
+
+```bash
+python scripts/regenerate_pinned_requirements.py
+```
 
 ### Security Checks
 

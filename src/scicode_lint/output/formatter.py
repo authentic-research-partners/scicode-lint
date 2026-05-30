@@ -322,7 +322,9 @@ def _format_text(results: list[LintResult]) -> str:
             err.append(f"{result.file}", style="bold")
             err.append(" — Error during linting\n", style="bold")
             err.append(f"    {result.error.error_type}: {result.error.message}")
-            console.print(err)
+            # soft_wrap so a long file path can't hard-wrap the status line
+            # mid-phrase ("Error during \nlinting"). Breaks only on explicit \n.
+            console.print(err, soft_wrap=True)
             console.print()
             continue
 
@@ -333,7 +335,9 @@ def _format_text(results: list[LintResult]) -> str:
         header.append(f"{result.file}", style="bold")
         count = len(result.findings)
         header.append(f" — {count} issue{'s' if count != 1 else ''} found")
-        console.print(header)
+        # soft_wrap: same reason as the error line — keep "{path} — N issues
+        # found" on one logical line regardless of path length.
+        console.print(header, soft_wrap=True)
         console.print()
 
         for finding in result.findings:

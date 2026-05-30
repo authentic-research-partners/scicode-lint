@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "scicode-lint"
-version = "0.3.1"
+version = "0.4.0"
 description = "AI-powered linter for scientific ML code. Detects methodology bugs such as data leakage, incorrect cross-validation, numerical instability, and reproducibility issues that produce plausible but wrong results. 66 detection patterns across 5 categories. Runs via local or institutional vLLM server, no cloud APIs."
 readme = "README.md"
 requires-python = ">=3.13,<3.14"
@@ -158,6 +158,9 @@ exclude = [
     "real_world_demo/collected_code/",
     "real_world_demo/cloned_repos/",
     "benchmarks/fixtures/",
+    # Standalone experiment scripts target external/in-container runtimes
+    # (e.g. server-internal modules) that aren't installed locally.
+    "experiments/",
 ]
 
 [[tool.mypy.overrides]]
@@ -180,3 +183,4 @@ exclude_dirs = ["src/scicode_lint/patterns"]
 # B603 subprocess_without_shell_equals_true — we use list args, no shell injection
 # B607 start_process_with_partial_path — nvidia-smi/podman/docker are standard system tools
 skips = ["B101", "B404", "B603", "B607"]
+
