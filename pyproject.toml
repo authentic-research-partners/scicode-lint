@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "scicode-lint"
-version = "0.4.1"
+version = "0.5.0"
 description = "AI-powered linter for scientific ML code. Detects methodology bugs such as data leakage, incorrect cross-validation, numerical instability, and reproducibility issues that produce plausible but wrong results. 66 detection patterns across 5 categories. Runs via local or institutional vLLM server, no cloud APIs."
 readme = "README.md"
 requires-python = ">=3.13,<3.14"
@@ -18,7 +18,7 @@ maintainers = [
 ]
 keywords = ["linter", "scientific-computing", "machine-learning", "pytorch", "data-leakage", "methodology-bugs", "code-review", "research-code", "numerical-stability", "cross-validation", "static-analysis", "vllm", "qwen"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "Intended Audience :: Science/Research",
     "Programming Language :: Python :: 3",

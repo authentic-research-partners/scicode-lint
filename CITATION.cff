@@ -2,7 +2,7 @@ cff-version: 1.2.0
 message: "If you use scicode-lint in your research, please cite the paper below."
 type: software
 title: scicode-lint
-version: 0.4.1
+version: 0.5.0
 date-released: "2026-06-15"
 abstract: >
   AI-powered linter for scientific ML code. Detects methodology bugs such as

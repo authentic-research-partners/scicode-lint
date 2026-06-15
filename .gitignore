@@ -67,5 +67,8 @@ real_world_demo/reports/
 *.db
 *.sqlite
 
+# JOSS paper build artifact (regenerated from paper.md; not committed)
+paper.pdf
+
 # direnv
 .envrc

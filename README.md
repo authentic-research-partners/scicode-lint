@@ -163,7 +163,7 @@ Two-stage filter (runs automatically):
 
 ## Project Status
 
-**Work in Progress** (v0.4.1 alpha)
+**Beta** (v0.5.0). The detection engine, CLI, and Python API are stable; the pattern library (66 patterns across 5 categories) is actively curated and grows over time, as any linter's rule set does. See **Current Limitations** for known constraints.
 
 | Test Type | Precision | Recall | Description |
 |-----------|-----------|--------|-------------|

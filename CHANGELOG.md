@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-06-15
+
+### Changed
+- **Promoted to Beta.** The detection engine, CLI, and Python API are stable; the
+  pattern library (66 patterns across 5 categories) is actively curated and grows over
+  time, as any linter's rule set does. The Trove classifier (`Development Status`) and
+  README status move from Alpha to Beta. No API or runtime-behavior changes.
+
 ## [0.4.1] - 2026-06-15
 
 ### Added
@@ -402,6 +410,7 @@ Initial public release.
 - Evaluation framework with precision/recall metrics
 - Designed for both human developers and AI coding agents
 
+[0.5.0]: https://github.com/authentic-research-partners/scicode-lint/releases/tag/v0.5.0
 [0.4.1]: https://github.com/authentic-research-partners/scicode-lint/releases/tag/v0.4.1
 [0.4.0]: https://github.com/authentic-research-partners/scicode-lint/releases/tag/v0.4.0
 [0.3.1]: https://github.com/authentic-research-partners/scicode-lint/releases/tag/v0.3.1

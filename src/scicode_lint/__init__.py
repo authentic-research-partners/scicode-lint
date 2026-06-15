@@ -5,7 +5,7 @@ Detects common bugs in scientific code: data leakage, missing seeds,
 PyTorch training issues, numerical errors, and more.
 """
 
-__version__ = "0.4.1"
+__version__ = "0.5.0"
 
 from scicode_lint.detectors.catalog import DetectionCatalog, DetectionPattern
 from scicode_lint.linter import SciCodeLinter
