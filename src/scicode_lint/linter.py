@@ -188,7 +188,7 @@ class SciCodeLinter:
             code = extract_code_from_notebook(file_path)
             logger.debug(f"Extracted {len(code)} bytes from notebook")
         else:
-            code = file_path.read_text()
+            code = await asyncio.to_thread(file_path.read_text)
             logger.debug(f"File size: {len(code)} bytes")
 
         # Strip comments before LLM analysis (if enabled)

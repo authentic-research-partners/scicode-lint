@@ -79,7 +79,9 @@ async def check_file_with_classifier(
         try:
             # Read file content
             try:
-                content = file_path.read_text(encoding="utf-8", errors="ignore")
+                content = await asyncio.to_thread(
+                    file_path.read_text, encoding="utf-8", errors="ignore"
+                )
             except Exception as e:
                 logger.warning(f"Cannot read {file_path}: {e}")
                 return {

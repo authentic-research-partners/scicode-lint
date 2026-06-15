@@ -2,8 +2,8 @@ cff-version: 1.2.0
 message: "If you use scicode-lint in your research, please cite the paper below."
 type: software
 title: scicode-lint
-version: 0.4.0
-date-released: "2026-05-30"
+version: 0.4.1
+date-released: "2026-06-15"
 abstract: >
   AI-powered linter for scientific ML code. Detects methodology bugs such as
   data leakage, incorrect cross-validation, numerical instability, and
@@ -12,6 +12,7 @@ abstract: >
 authors:
   - family-names: Samsonau
     given-names: Sergey V.
+    orcid: "https://orcid.org/0000-0002-0835-2970"
 url: "https://github.com/authentic-research-partners/scicode-lint"
 repository-code: "https://github.com/authentic-research-partners/scicode-lint"
 license: MIT

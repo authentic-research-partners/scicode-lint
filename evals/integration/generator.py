@@ -189,7 +189,7 @@ class ScenarioGenerator:
                 for f in result.findings
             ]
         finally:
-            temp_file.unlink(missing_ok=True)
+            temp_file.unlink(missing_ok=True)  # noqa: ASYNC240 — one-shot temp cleanup
 
     async def generate_one(
         self,

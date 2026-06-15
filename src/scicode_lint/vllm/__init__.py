@@ -503,7 +503,9 @@ class VLLMMetricsMonitor:
         # Ensure output directory exists
         os.makedirs(os.path.dirname(self.output_file), exist_ok=True)
 
-        with open(self.output_file, "w") as f:
+        # Background telemetry writer; the blocking CSV writes are acceptable
+        # here and async file I/O would require an aiofiles dependency.
+        with open(self.output_file, "w") as f:  # noqa: ASYNC230
             # Write CSV header
             f.write("timestamp,elapsed_s,running,waiting,finished,throughput_req_s\n")
             f.flush()

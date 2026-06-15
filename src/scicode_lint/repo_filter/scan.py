@@ -202,9 +202,9 @@ async def scan_repo_for_ml_files(
         >>> summary = await scan_repo_for_ml_files(Path("./my_ml_project"), client)
         >>> print(f"Found {summary.self_contained} self-contained ML files")
     """
-    # Find Python files and notebooks
-    python_files = list(repo_path.rglob("*.py"))
-    notebooks = list(repo_path.rglob("*.ipynb"))
+    # Find Python files and notebooks (tree walk offloaded — don't block the loop)
+    python_files = await asyncio.to_thread(lambda: list(repo_path.rglob("*.py")))
+    notebooks = await asyncio.to_thread(lambda: list(repo_path.rglob("*.ipynb")))
     all_files = python_files + notebooks
 
     logger.info(f"Found {len(python_files)} .py files and {len(notebooks)} .ipynb files")
@@ -219,7 +219,7 @@ async def scan_repo_for_ml_files(
             if filepath.suffix == ".ipynb":
                 code = _extract_code_from_notebook(filepath)
             else:
-                code = filepath.read_text(encoding="utf-8")
+                code = await asyncio.to_thread(filepath.read_text, encoding="utf-8")
 
             # Skip files that are too large (would exceed LLM context)
             tokens = estimate_tokens(code)

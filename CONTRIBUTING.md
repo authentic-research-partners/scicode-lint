@@ -15,7 +15,9 @@ Thank you for your interest in contributing to scicode-lint! This document provi
 
 ## Code of Conduct
 
-Be respectful, constructive, and professional in all interactions.
+This project adheres to the [Contributor Covenant](CODE_OF_CONDUCT.md). By
+participating, you are expected to uphold this code. Please report unacceptable
+behavior to the contact listed in [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
 
 ## Getting Started
 

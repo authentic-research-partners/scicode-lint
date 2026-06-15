@@ -207,7 +207,7 @@ async def clone_all_repos(
     Returns:
         List of CloneResult for each repo.
     """
-    output_dir.mkdir(exist_ok=True, parents=True)
+    output_dir.mkdir(exist_ok=True, parents=True)  # noqa: ASYNC240 — one-shot setup before fan-out
 
     semaphore = asyncio.Semaphore(max_concurrent)
     tasks = [clone_repo(repo["repo_url"], output_dir, timeout, semaphore) for repo in repos]

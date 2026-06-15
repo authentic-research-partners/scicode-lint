@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: Lint and test
+    runs-on: ubuntu-latest
+    # Run only on the canonical public repo — not the private dev mirror or
+    # contributor forks' own branches. PRs still run: for pull_request events
+    # github.repository is the base repo (the public one).
+    if: github.repository == 'authentic-research-partners/scicode-lint'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install package with dev dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Ruff lint
+        run: ruff check .
+
+      - name: Ruff format check
+        run: ruff format --check .
+
+      - name: Run tests
+        # The vLLM-backed tests are deselected by default (see pyproject.toml
+        # addopts); this job runs the service-free suite, which needs no GPU.
+        run: pytest tests/

@@ -138,7 +138,7 @@ class MetricsMonitor:
                     f"  [live] running={snap.running}, waiting={snap.waiting}, "
                     f"KV={snap.kv_cache_pct:.1f}%"
                 )
-            except Exception:
+            except Exception:  # noqa: S110 — best-effort live status in a hot poll loop
                 pass
             time.sleep(self.interval)
 

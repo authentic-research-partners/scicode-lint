@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "scicode-lint"
-version = "0.4.0"
+version = "0.4.1"
 description = "AI-powered linter for scientific ML code. Detects methodology bugs such as data leakage, incorrect cross-validation, numerical instability, and reproducibility issues that produce plausible but wrong results. 66 detection patterns across 5 categories. Runs via local or institutional vLLM server, no cloud APIs."
 readme = "README.md"
 requires-python = ">=3.13,<3.14"
@@ -14,7 +14,7 @@ authors = [
     {name = "Sergey Samsonau"}
 ]
 maintainers = [
-    {name = "Authentic Research Partners LLC", email = "info@arpconnect.com"}
+    {name = "Authentic Research Partners LLC", email = "oss@arpconnect.com"}
 ]
 keywords = ["linter", "scientific-computing", "machine-learning", "pytorch", "data-leakage", "methodology-bugs", "code-review", "research-code", "numerical-stability", "cross-validation", "static-analysis", "vllm", "qwen"]
 classifiers = [
@@ -96,6 +96,7 @@ only-include = [
     "CITATION.cff",
     "INSTALLATION.md",
     "CONTRIBUTING.md",
+    "CODE_OF_CONDUCT.md",
     "pyproject.toml",
 ]
 exclude = [
@@ -125,7 +126,19 @@ target-version = "py313"
 exclude = ["src/scicode_lint/patterns/"]
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP"]
+# E/F/I/UP = pycodestyle, pyflakes, isort, pyupgrade. The remaining codes mechanically
+# enforce the project's documented antipatterns: specific codes only, not whole
+# families — the full B/ASYNC surface flags off-target nits (B007, ASYNC109) with no
+# rule behind them.
+#   S110, S112  silent except: pass / continue (no silent error swallowing)
+#   B006, B008  mutable default arguments
+#   B023        late-binding closure bug       (real bug-finder; no false positives here)
+#   B904        raise without 'from' in except (preserve error chains)
+#   ASYNC210    httpx.Client in an async def   (async-native)
+#   ASYNC230    blocking open() in an async def(async-native)
+#   ASYNC240    blocking Path I/O in async def (async-native)
+#   ASYNC251    time.sleep in an async def     (async-native)
+select = ["E", "F", "I", "UP", "S110", "S112", "B006", "B008", "B023", "B904", "ASYNC210", "ASYNC230", "ASYNC240", "ASYNC251"]
 
 [tool.ruff.lint.per-file-ignores]
 # Prompts contain long strings that shouldn't be wrapped

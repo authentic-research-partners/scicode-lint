@@ -134,7 +134,7 @@ def fetch_metrics(
         resp = requests.get(f"{base_url}/metrics", timeout=2)
         if resp.status_code == 200:
             return parse_metrics(resp.text), parse_cache_config(resp.text)
-    except Exception:
+    except Exception:  # noqa: S110 — best-effort poll; server-down rendered as N/A
         pass
     return None, {}
 
@@ -151,7 +151,7 @@ def fetch_server_info(base_url: str) -> dict[str, str | int] | None:
                     "model": model_info.get("id", "Unknown"),
                     "max_model_len": model_info.get("max_model_len", "N/A"),
                 }
-    except Exception:
+    except Exception:  # noqa: S110 — best-effort poll; server-down rendered as N/A
         pass
     return None
 

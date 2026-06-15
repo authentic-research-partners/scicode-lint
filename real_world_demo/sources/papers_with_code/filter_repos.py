@@ -143,7 +143,8 @@ async def filter_all_repos(
     Returns:
         Dict with summary and list of self-contained files.
     """
-    repo_dirs = [d for d in cloned_dir.iterdir() if d.is_dir() and (d / ".git").exists()]
+    # One-shot directory listing before the concurrent section.
+    repo_dirs = [d for d in cloned_dir.iterdir() if d.is_dir() and (d / ".git").exists()]  # noqa: ASYNC240
     logger.info(f"Found {len(repo_dirs)} cloned repos")
 
     llm_config = load_llm_config()

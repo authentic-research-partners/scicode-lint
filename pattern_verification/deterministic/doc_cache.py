@@ -14,6 +14,7 @@ import tomllib
 from pathlib import Path
 from typing import Any
 
+from loguru import logger
 from pydantic import BaseModel, Field
 
 # Add project root to sys.path so pattern_verification can be imported
@@ -506,7 +507,8 @@ def collect_all_pattern_references(patterns_dir: Path) -> list[tuple[str, str]]:
                 for url in data.get("meta", {}).get("references", []):
                     if isinstance(url, str):
                         refs.append((pattern_id, url))
-            except Exception:
+            except Exception as e:
+                logger.debug(f"skipping {toml_path}: {e}")
                 continue
     return refs
 

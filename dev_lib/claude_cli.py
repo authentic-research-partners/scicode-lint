@@ -330,17 +330,17 @@ class ClaudeCLI:
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                 )
-            except FileNotFoundError:
+            except FileNotFoundError as err:
                 raise ClaudeCLINotFoundError(
                     "Claude CLI not found. Install: npm install -g @anthropic-ai/claude-code"
-                )
+                ) from err
 
             try:
                 stdout_bytes, stderr_bytes = await asyncio.wait_for(
                     proc.communicate(),
                     timeout=timeout,
                 )
-            except TimeoutError:
+            except TimeoutError as err:
                 elapsed = time.monotonic() - t0
                 logger.warning(
                     "claude call timeout | label={} elapsed={:.1f}s timeout={}s",
@@ -350,7 +350,7 @@ class ClaudeCLI:
                 )
                 proc.kill()
                 await proc.wait()
-                raise ClaudeCLITimeoutError(timeout)
+                raise ClaudeCLITimeoutError(timeout) from err
 
         elapsed = time.monotonic() - t0
         stdout = stdout_bytes.decode() if stdout_bytes else ""

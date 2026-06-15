@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.1] - 2026-06-15
+
+### Added
+- **Community health files and CI.** `CODE_OF_CONDUCT.md` (Contributor Covenant 2.1)
+  and a GitHub Actions workflow that runs ruff lint, ruff format check, and the
+  service-free test suite on Python 3.13.
+- **JOSS metapaper.** `paper.md` and `paper.bib` accompany the repository for a
+  submission to the Journal of Open Source Software.
+
+### Changed
+- `CONTRIBUTING.md` now points contributors to the Code of Conduct.
+- Stricter lint enforcement: ruff rules for mutable default arguments, blocking calls
+  in async code, silent exception swallowing, and exception chaining are now enabled,
+  and the existing findings were fixed.
+
 ## [0.4.0] - 2026-05-30
 
 ### Changed
@@ -387,6 +402,7 @@ Initial public release.
 - Evaluation framework with precision/recall metrics
 - Designed for both human developers and AI coding agents
 
+[0.4.1]: https://github.com/authentic-research-partners/scicode-lint/releases/tag/v0.4.1
 [0.4.0]: https://github.com/authentic-research-partners/scicode-lint/releases/tag/v0.4.0
 [0.3.1]: https://github.com/authentic-research-partners/scicode-lint/releases/tag/v0.3.1
 [0.3.0]: https://github.com/authentic-research-partners/scicode-lint/releases/tag/v0.3.0

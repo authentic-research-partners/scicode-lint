@@ -12,6 +12,8 @@ import tomllib
 from pathlib import Path
 from typing import Any
 
+from loguru import logger
+
 # Add project root to sys.path so pattern_verification can be imported
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
@@ -172,7 +174,8 @@ def check_intent_hints(pattern_dir: Path, result: ValidationResult) -> None:
 
             try:
                 content = py_file.read_text()
-            except Exception:
+            except Exception as e:
+                logger.debug(f"skipping unreadable {py_file}: {e}")
                 continue
 
             for pattern, desc in INTENT_HINT_PATTERNS:
@@ -430,8 +433,8 @@ def check_expected_location_snippets(
                                 file=file_path_str,
                             )
                         )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"snippet line-check skipped for {file_path_str}: {e}")
 
 
 # =============================================================================
@@ -719,8 +722,8 @@ def check_no_comments(pattern_dir: Path, result: ValidationResult) -> None:
                         break
             except tokenize.TokenError:
                 pass
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"comment scan skipped for test_{test_type}/{py_file.name}: {e}")
 
 
 # =============================================================================
